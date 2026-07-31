@@ -10,14 +10,18 @@
 
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
-// INITGUID:在本 TU 发出 CLSID_MMDeviceEnumerator / IID_IAudioClient /
-// IID_IAudioCaptureClient 的定义(它们不在 uuid.lib 里,不 INITGUID 会 LNK2019)。
-#ifndef INITGUID
-#define INITGUID
 #include <mmdeviceapi.h>   // IMMDeviceEnumerator, CLSID_MMDeviceEnumerator, eRender/eConsole
 #include <audioclient.h>   // IAudioClient, AUDCLNT_STREAMFLAGS_LOOPBACK, IAudioCaptureClient
-#undef INITGUID
-#endif
+
+// WASAPI COM GUID 手工定义:部分 SDK / Qt MSVC 套件的 uuid.lib 不导出这几个音频 GUID
+// (链接报 LNK2019;INITGUID 在此文件不管用,因为顶部 Qt 头已先含过 windows.h,DEFINE_GUID
+// 早已是 extern 声明形)。头里已声明 EXTERN_C,这里补定义即可,不再依赖 uuid.lib。
+extern "C" const GUID CLSID_MMDeviceEnumerator =
+    {0xBCDE0395, 0xE52F, 0x467C, {0x8E, 0x3D, 0xC4, 0x57, 0x92, 0x91, 0x69, 0x2E}};
+extern "C" const GUID IID_IAudioClient =
+    {0x1CB9AD4C, 0xDBFA, 0x4C32, {0xB1, 0x78, 0xC2, 0xF5, 0x68, 0xA7, 0x03, 0xB2}};
+extern "C" const GUID IID_IAudioCaptureClient =
+    {0xC8ADBD64, 0xE71E, 0x48A0, {0xA4, 0xDE, 0x18, 0x5C, 0x39, 0x5C, 0xE3, 0x17}};
 
 // Windows WASAPI loopback:抓「默认输出设备」的混音(任何 app 的声音都经过这里),
 // 下混 mono float,按 ~2048 样本切片发 pcmFrame。复用 FeatureExtractor::compute(PCM 路径,

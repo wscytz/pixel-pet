@@ -8,10 +8,22 @@ cd "$(dirname "$0")/.."
 APP=build/pixel-pet.app
 [ -d "$APP" ] || { echo "先构建:cmake --build build -j"; exit 1; }
 
-# Qt bin(macdeployqt 所在)
-QT_BIN="$(dirname "$(command -v qmake6 || command -v qmake || true)" 2>/dev/null)"
-[ -n "$QT_BIN" ] || QT_BIN=/opt/homebrew/opt/qt/bin
-[ -x "$QT_BIN/macdeployqt" ] || { echo "找不到 macdeployqt(改 QT_BIN 或 brew install qt)"; exit 1; }
+# Qt bin(macdeployqt 所在)。按序探测:显式 QT_BIN → 环境 QTDIR → PATH 上的
+# macdeployqt/qmake6 → aqtinstall($HOME/Qt/<ver>/<arch>/bin)→ Homebrew。
+find_macdeployqt() {
+    if [ -n "${QT_BIN:-}" ] && [ -x "$QT_BIN/macdeployqt" ]; then echo "$QT_BIN"; return; fi
+    if [ -n "${QTDIR:-}" ] && [ -x "$QTDIR/bin/macdeployqt" ]; then echo "$QTDIR/bin"; return; fi
+    local q; q="$(command -v macdeployqt 2>/dev/null || true)"
+    [ -n "$q" ] && { echo "$(dirname "$q")"; return; }
+    q="$(command -v qmake6 2>/dev/null || true)"
+    [ -n "$q" ] && { echo "$(dirname "$q")"; return; }
+    for d in "$HOME"/Qt/*/*/bin; do [ -x "$d/macdeployqt" ] && { echo "$d"; return; }; done
+    [ -x /opt/homebrew/opt/qt/bin/macdeployqt ] && { echo /opt/homebrew/opt/qt/bin; return; }
+    [ -x /usr/local/opt/qt/bin/macdeployqt ] && { echo /usr/local/opt/qt/bin; return; }
+    echo ""
+}
+QT_BIN="$(find_macdeployqt)"
+[ -n "$QT_BIN" ] || { echo "找不到 macdeployqt(装 Qt,或设 QT_BIN/QTDIR)"; exit 1; }
 
 VER="$(/usr/libexec/PlistBuddy -c 'Print CFBundleShortVersionString' "$APP/Contents/Info.plist" 2>/dev/null || echo 0.1.0)"
 rm -rf dist
