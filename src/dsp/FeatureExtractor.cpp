@@ -132,12 +132,20 @@ void FeatureExtractor::compute(const float* mono, int n, int sampleRate,
     const int M = kN / 2;
     const int lowIdx = std::max(2, static_cast<int>(250.0f / sampleRate * kN));
     const int kickIdx = std::max(2, static_cast<int>(120.0f / sampleRate * kN));
+    const int bodyLo = std::max(1, static_cast<int>(150.0f / sampleRate * kN));
+    const int bodyHi = std::min(M, static_cast<int>(300.0f / sampleRate * kN));
     const int snareLo = std::max(1, static_cast<int>(1000.0f / sampleRate * kN));
     const int snareHi = std::min(M, static_cast<int>(4000.0f / sampleRate * kN));
+    const int subIdx[5] = {snareLo,
+                           snareLo + (snareHi - snareLo) / 4,
+                           snareLo + 2 * (snareHi - snareLo) / 4,
+                           snareLo + 3 * (snareHi - snareLo) / 4,
+                           snareHi};
 
     // flatness + lowRatio + 低频 onset(BPM 用)。遍历一次算齐。
     double logSum = 0.0, magSum = 0.0, lowE = 0.0, totalE = 0.0;
-    float lowFlux = 0.0f, kickFlux = 0.0f, snareFlux = 0.0f;
+    float lowFlux = 0.0f, kickFlux = 0.0f, bodyFlux = 0.0f, snareFlux = 0.0f;
+    float snareB[4] = {};
     for (int i = 1; i < M; ++i) {
         const float m = mag[i] + kEps;
         logSum += std::log(m);
@@ -148,11 +156,18 @@ void FeatureExtractor::compute(const float* mono, int n, int sampleRate,
         const float d = mag[i] - prevMag_[i];
         if (d > 0.0f && i < lowIdx) lowFlux += d;
         if (d > 0.0f && i < kickIdx) kickFlux += d;
-        if (d > 0.0f && i >= snareLo && i < snareHi) snareFlux += d;
+        if (d > 0.0f && i >= bodyLo && i < bodyHi) bodyFlux += d;
+        if (i >= snareLo && i < snareHi) {
+            if (d > 0.0f) snareFlux += d;
+            for (int k = 0; k < 4; ++k)
+                if (d > 0.0f && i >= subIdx[k] && i < subIdx[k + 1]) snareB[k] += d;
+        }
     }
     std::copy(mag.begin(), mag.begin() + M, prevMag_.begin());
     out.kickFlux = kickFlux;
+    out.bodyFlux = bodyFlux;
     out.snareFlux = snareFlux;
+    for (int k = 0; k < 4; ++k) out.snareBands[k] = snareB[k];
 
     const int cnt = M - 1;
     out.flatness = (magSum > kEps && cnt > 0)
@@ -183,7 +198,7 @@ void FeatureExtractor::compute(const float* mono, int n, int sampleRate,
 
     onsetHistory_.push_back(lowFlux);   // BPM 用低频 onset(抗高频干扰)
     updateBpm(analysisHz, out);
-    rhythmDet_.feed(kickFlux, snareFlux, out.bpm, out.bpmConfidence, analysisHz);   // 节奏型
+    rhythmDet_.feed(kickFlux, bodyFlux, out.snareBands.data(), out.bpm, out.bpmConfidence, analysisHz);   // 节奏型
     out.rhythmBackbeat = rhythmDet_.backbeat();
     out.rhythmKickDensity = rhythmDet_.kickDensity();
     out.rhythmSyncop = rhythmDet_.syncop();
@@ -220,10 +235,18 @@ void FeatureExtractor::computeFromBins(const uint8_t* bins, int n, float rms, Fe
     // 低频分界:网页 bins 线性铺到 nyquist,低频分辨率有限,取前 1/16 当低频区。
     const int lowIdx = std::max(2, n / 16);
     const int kickIdx = std::max(2, static_cast<int>(120.0f / 24000.0f * n));
+    const int bodyLo = std::max(1, static_cast<int>(150.0f / 24000.0f * n));
+    const int bodyHi = std::min(n, static_cast<int>(300.0f / 24000.0f * n));
     const int snareLo = std::max(1, static_cast<int>(1000.0f / 24000.0f * n));
     const int snareHi = std::min(n, static_cast<int>(4000.0f / 24000.0f * n));
+    const int subIdx[5] = {snareLo,
+                           snareLo + (snareHi - snareLo) / 4,
+                           snareLo + 2 * (snareHi - snareLo) / 4,
+                           snareLo + 3 * (snareHi - snareLo) / 4,
+                           snareHi};
     double logSum = 0.0, magSum = 0.0, lowE = 0.0, totalE = 0.0;
-    float lowFlux = 0.0f, kickFlux = 0.0f, snareFlux = 0.0f;
+    float lowFlux = 0.0f, kickFlux = 0.0f, bodyFlux = 0.0f, snareFlux = 0.0f;
+    float snareB[4] = {};
     for (int i = 0; i < n; ++i) {
         const float m = mag[i] + kEps;
         logSum += std::log(m);
@@ -234,11 +257,18 @@ void FeatureExtractor::computeFromBins(const uint8_t* bins, int n, float rms, Fe
         const float d = mag[i] - prevBinsMag_[i];
         if (d > 0.0f && i < lowIdx) lowFlux += d;
         if (d > 0.0f && i < kickIdx) kickFlux += d;
-        if (d > 0.0f && i >= snareLo && i < snareHi) snareFlux += d;
+        if (d > 0.0f && i >= bodyLo && i < bodyHi) bodyFlux += d;
+        if (i >= snareLo && i < snareHi) {
+            if (d > 0.0f) snareFlux += d;
+            for (int k = 0; k < 4; ++k)
+                if (d > 0.0f && i >= subIdx[k] && i < subIdx[k + 1]) snareB[k] += d;
+        }
     }
     std::copy(mag.begin(), mag.end(), prevBinsMag_.begin());
     out.kickFlux = kickFlux;
+    out.bodyFlux = bodyFlux;
     out.snareFlux = snareFlux;
+    for (int k = 0; k < 4; ++k) out.snareBands[k] = snareB[k];
 
     out.flatness = (magSum > kEps && n > 0)
         ? std::clamp(static_cast<float>(std::exp(logSum / n) / (magSum / n)), 0.0f, 1.0f)
@@ -270,7 +300,7 @@ void FeatureExtractor::computeFromBins(const uint8_t* bins, int n, float rms, Fe
 
     onsetHistory_.push_back(lowFlux);
     updateBpm(30.0f, out);  // 插件推送 ~30Hz
-    rhythmDet_.feed(kickFlux, snareFlux, out.bpm, out.bpmConfidence, 30.0f);   // 节奏型
+    rhythmDet_.feed(kickFlux, bodyFlux, out.snareBands.data(), out.bpm, out.bpmConfidence, 30.0f);   // 节奏型
     out.rhythmBackbeat = rhythmDet_.backbeat();
     out.rhythmKickDensity = rhythmDet_.kickDensity();
     out.rhythmSyncop = rhythmDet_.syncop();

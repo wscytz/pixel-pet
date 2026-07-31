@@ -28,7 +28,9 @@ struct Features {
     SoundClass sound = SoundClass::Music;   // 场景判别结果
     Section section = Section::Unknown;     // 结构段(副歌/主歌/桥/前奏/尾奏),1Hz 粒度、滞回平滑
     float kickFlux = 0.0f;   // 低频(~40-120Hz)正谱差通量(底鼓 onset;节奏型用)
+    float bodyFlux = 0.0f;   // 中低(~150-300Hz)正谱差通量(军鼓鼓体 onset;双带确认用)
     float snareFlux = 0.0f;  // 中频(~1-4kHz)正谱差通量(军鼓/掌声 onset)
+    std::array<float, 4> snareBands = {};  // 1-4kHz 四子带通量(宽带共现判军鼓:窄带瞬态只打 1-2 带)
     float rhythmBackbeat = 0.0f;    // 0..1 snare 落 2/4 拍占比(rock/pop 反拍)
     float rhythmKickDensity = 0.0f; // 0..1 每拍底鼓数(EDM 四拍=1.0,rock 1&3=0.5,抒情≈0)
     float rhythmSyncop = 0.0f;      // 0..1 offbeat kick 能量占比(dubstep/hiphop 切分)
