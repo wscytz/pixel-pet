@@ -57,7 +57,7 @@ if(APPLE)
         MACOSX_BUNDLE TRUE
         MACOSX_BUNDLE_BUNDLE_NAME "PixelPet"
         MACOSX_BUNDLE_GUI_IDENTIFIER "com.wscytz.pixelpet"
-        MACOSX_BUNDLE_SHORT_VERSION_STRING "0.1.1")
+        MACOSX_BUNDLE_SHORT_VERSION_STRING "0.1.2")
 elseif(WIN32)
     set_target_properties(pixel-pet PROPERTIES WIN32_EXECUTABLE TRUE)
 endif()
