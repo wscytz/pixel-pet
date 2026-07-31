@@ -19,7 +19,7 @@ jobs:
       - name: Install Qt (aqtinstall 6.11.1)
         run: |
           python3 -m pip install --break-system-packages --quiet aqtinstall
-          aqt install-qt mac desktop 6.11.1 clang_64 --outputdir "$HOME/Qt"
+          aqt install-qt mac desktop 6.11.1 clang_64 --outputdir "$HOME/Qt" -m qtmultimedia qtwebsockets
       - name: Configure
         run: |
           export CMAKE_PREFIX_PATH="$HOME/Qt/6.11.1/macos"   # 在 shell 展开 $HOME(env: 块不展开)
