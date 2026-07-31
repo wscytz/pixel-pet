@@ -1,6 +1,7 @@
 #include "dsp/RhythmDetector.h"
 
 #include <algorithm>
+#include <cmath>
 
 void RhythmDetector::feed(float kick, float body, const float* snareBands,
                           float bpm, float bpmConf, float analysisHz) {
@@ -55,7 +56,7 @@ void RhythmDetector::feed(float kick, float body, const float* snareBands,
         beatPeriod_ = analysisHz * 60.0f / bpm;
         const float barPeriod = 4.0f * beatPeriod_;
         phaseFrames_ += 1.0f;
-        if (phaseFrames_ >= barPeriod) phaseFrames_ -= barPeriod;
+        if (phaseFrames_ >= barPeriod) phaseFrames_ = std::fmod(phaseFrames_, barPeriod);
         int b = static_cast<int>(phaseFrames_ / barPeriod * kBin);
         if (b >= kBin) b = kBin - 1;
         kickHist_[b] += kickEnv_;
@@ -85,11 +86,15 @@ void RhythmDetector::feed(float kick, float body, const float* snareBands,
     }
     for (int i = 2; i < kBin; i += 4) kOff  += kickR[i];
     const float kd = std::max(1e-6f, kTotal);
-    syncop_ += (kOff / kd - syncop_) * 0.05f;
-
     int dense = 0;   // 拍起点桶里 kick 显著(>0.4×最强)的个数 → 每拍底鼓
     for (int i = 0; i < kBin; i += 4) if (kickR[i] > 0.4f * kMax + 1e-6f) ++dense;
-    kickDensity_ += (dense / 4.0f - kickDensity_) * 0.05f;
+    if (bpm > 1.0f && bpmConf > 0.25f) {   // bpm 可信才更新;否则衰减归零(防音停 kickDensity/syncop 钉死、宠物继续蹦)
+        syncop_ += (kOff / kd - syncop_) * 0.05f;
+        kickDensity_ += (dense / 4.0f - kickDensity_) * 0.05f;
+    } else {
+        syncop_ *= 0.95f;
+        kickDensity_ *= 0.95f;
+    }
 
     // 反拍 = 击打落点 2/4 拍占比。BPM 常把 kick 1&3 的 rock 读成半速 → snare 2&4 落到
     // offbeat {2,6,10,14},取「拍位或 offbeat 更大」兜底(两种 tempo 解读都算反拍)。

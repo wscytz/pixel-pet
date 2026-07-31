@@ -204,108 +204,7 @@ void FeatureExtractor::compute(const float* mono, int n, int sampleRate,
     out.rhythmSyncop = rhythmDet_.syncop();
 }
 
-void FeatureExtractor::computeFromBins(const uint8_t* bins, int n, float rms, Features& out) {
-    if (static_cast<int>(prevBinsMag_.size()) < n) prevBinsMag_.assign(n, 0.0f);
-    static thread_local std::vector<float> mag;
-    mag.assign(n, 0.0f);
-    for (int i = 0; i < n; ++i) mag[i] = bins[i] / 255.0f;
-
-    // 48 段 log(bin index)
-    for (int b = 0; b < 48; ++b) {
-        int i0 = static_cast<int>(std::pow(static_cast<float>(n), b / 48.0f));
-        int i1 = static_cast<int>(std::pow(static_cast<float>(n), (b + 1) / 48.0f));
-        i0 = std::clamp(i0, 0, n - 1);
-        i1 = std::clamp(i1, 0, n);
-        float sum = 0.0f;
-        int cnt = 0;
-        for (int i = i0; i < i1; ++i) { sum += mag[i]; ++cnt; }
-        float v = cnt > 0 ? sum / cnt : 0.0f;
-        v = std::log1p(v * 12.0f) / std::log1p(12.0f);
-        v = std::clamp(v, 0.0f, 1.0f);
-        out.spectrum[b] = prevSpec_[b] * 0.55f + v * 0.45f;
-        prevSpec_[b] = out.spectrum[b];
-    }
-
-    out.rms = std::clamp(rms, 0.0f, 1.0f);
-
-    double sf = 0.0, sm = 0.0;
-    for (int i = 0; i < n; ++i) { sf += static_cast<double>(i) * mag[i]; sm += mag[i]; }
-    out.centroid = sm > 0 ? std::clamp(static_cast<float>(sf / sm / n), 0.0f, 1.0f) : 0.0f;
-
-    // 低频分界:网页 bins 线性铺到 nyquist,低频分辨率有限,取前 1/16 当低频区。
-    const int lowIdx = std::max(2, n / 16);
-    const int kickIdx = std::max(2, static_cast<int>(120.0f / 24000.0f * n));
-    const int bodyLo = std::max(1, static_cast<int>(150.0f / 24000.0f * n));
-    const int bodyHi = std::min(n, static_cast<int>(300.0f / 24000.0f * n));
-    const int snareLo = std::max(1, static_cast<int>(1000.0f / 24000.0f * n));
-    const int snareHi = std::min(n, static_cast<int>(4000.0f / 24000.0f * n));
-    const int subIdx[5] = {snareLo,
-                           snareLo + (snareHi - snareLo) / 4,
-                           snareLo + 2 * (snareHi - snareLo) / 4,
-                           snareLo + 3 * (snareHi - snareLo) / 4,
-                           snareHi};
-    double logSum = 0.0, magSum = 0.0, lowE = 0.0, totalE = 0.0;
-    float lowFlux = 0.0f, kickFlux = 0.0f, bodyFlux = 0.0f, snareFlux = 0.0f;
-    float snareB[4] = {};
-    for (int i = 0; i < n; ++i) {
-        const float m = mag[i] + kEps;
-        logSum += std::log(m);
-        magSum += m;
-        const double e = static_cast<double>(mag[i]) * mag[i];
-        totalE += e;
-        if (i < lowIdx) lowE += e;
-        const float d = mag[i] - prevBinsMag_[i];
-        if (d > 0.0f && i < lowIdx) lowFlux += d;
-        if (d > 0.0f && i < kickIdx) kickFlux += d;
-        if (d > 0.0f && i >= bodyLo && i < bodyHi) bodyFlux += d;
-        if (i >= snareLo && i < snareHi) {
-            if (d > 0.0f) snareFlux += d;
-            for (int k = 0; k < 4; ++k)
-                if (d > 0.0f && i >= subIdx[k] && i < subIdx[k + 1]) snareB[k] += d;
-        }
-    }
-    std::copy(mag.begin(), mag.end(), prevBinsMag_.begin());
-    out.kickFlux = kickFlux;
-    out.bodyFlux = bodyFlux;
-    out.snareFlux = snareFlux;
-    for (int k = 0; k < 4; ++k) out.snareBands[k] = snareB[k];
-
-    out.flatness = (magSum > kEps && n > 0)
-        ? std::clamp(static_cast<float>(std::exp(logSum / n) / (magSum / n)), 0.0f, 1.0f)
-        : 0.0f;
-    out.lowRatio = (totalE > 0.0) ? std::clamp(static_cast<float>(lowE / totalE), 0.0f, 1.0f) : 0.0f;
-    out.sound = smoothSound(prevSound_, classifySound(out.rms, out.flatness, out.lowRatio, out.centroid), soundDissent_);
-    prevSound_ = out.sound;
-
-    // chroma(网页 bins 线性映射 nyquist,假设 sr=44100;低频 bin 少分辨率有限,粗估)→ 调式
-    {
-        float chroma[12] = {};
-        const float nyq = 24000.0f;   // 先假设网页 AudioContext sr=48000(macOS 浏览器常见),验证频率映射是否偏差
-        for (int i = 1; i < n; ++i) {
-            const float f = static_cast<float>(i) * nyq / n;
-            if (f < 100.0f || f > 5000.0f) continue;   // 100Hz:150 会弱化 dubstep(去 sub-bass 致 mode -0.6→-0.3),保持 100
-            int p = static_cast<int>(std::lround(69.0f + 12.0f * std::log2(f / 440.0f)));
-            p = ((p % 12) + 12) % 12;
-            // 网页 bins 是 getByteFrequencyData(dB 压缩到 0-255,非线性幅度)→ 转回 linear 才与 PCM 一致
-            chroma[p] += std::pow(10.0f, (-100.0f + (bins[i] / 255.0f) * 70.0f) / 20.0f);
-        }
-        for (int c = 0; c < 12; ++c) prevChroma_[c] = prevChroma_[c] * 0.85f + chroma[c] * 0.15f;
-        estimateKey(prevChroma_.data(), out.mode, out.keyConfidence, keyDiag_);
-        out.keyMargin = keyDiag_.margin;
-        minorShare_ = minorShare_ * 0.98f + (keyDiag_.major ? 0.0f : 1.0f) * 0.02f;
-        out.minorShare = minorShare_;
-        sectionDet_.feed(prevChroma_.data(), out.rms, 30.0f);        // 网页 ~30Hz
-        out.section = sectionDet_.section();
-    }
-
-    onsetHistory_.push_back(lowFlux);
-    updateBpm(30.0f, out);  // 插件推送 ~30Hz
-    rhythmDet_.feed(kickFlux, bodyFlux, out.snareBands.data(), out.bpm, out.bpmConfidence, 30.0f);   // 节奏型
-    out.rhythmBackbeat = rhythmDet_.backbeat();
-    out.rhythmKickDensity = rhythmDet_.kickDensity();
-    out.rhythmSyncop = rhythmDet_.syncop();
-}
-
+// computeFromBins 已移除(2026-07):网页扩展改推 PCM 走 compute(),bins 路径不再需要。
 void FeatureExtractor::updateBpm(float analysisHz, Features& out) {
     if (onsetHistory_.size() > 240) onsetHistory_.erase(onsetHistory_.begin());
     const int N = static_cast<int>(onsetHistory_.size());
@@ -331,7 +230,7 @@ void FeatureExtractor::updateBpm(float analysisHz, Features& out) {
         std::sort(s.begin(), s.end());
         const float med = s[s.size() / 2];   // 中值滤波去野值
         prevBpm_ = (prevBpm_ < 1.0f) ? med : (prevBpm_ * 0.85f + med * 0.15f);
-        out.bpm = prevBpm_;
+        out.bpm = (best >= 0.20f) ? prevBpm_ : 0.0f;   // 规律性低(静音/无拍)→ bpm 置 0,别报误导值(下游本就 gate bpm>1)
         out.bpmConfidence = std::clamp(best, 0.0f, 1.0f);
     } else {
         out.bpm = 0.0f;

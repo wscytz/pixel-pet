@@ -25,6 +25,9 @@ void calibrateFromMs(float happyMs, float sadMs, float& happyThresh, float& sadT
 // 每档规范定义:valence/arousal(定动画节奏)+ 档配流派(手动模式)+ 中文名(菜单)。
 // 手动模式与 --dump 共用这一张表,避免各处各写。def() 穷举 switch 无 default →
 // -Werror=switch 兜住漏档。
+// 注:canonical V/A 只定动画节奏,不保证 mapTier(canonical.V, .A) 回原档 —— 两条路径
+//   刻意分离:canonical 给 --dump/手动模式节奏,mapTier 给实时音频分桶(如 Joyful
+//   canonical A=0.80 落 mapTier 的 Hype 带,是有意的:欢快上限即热血量)。
 struct TierDef { float valence; float arousal; Genre genre; const char* name; };
 TierDef def(Tier t);
 inline Emotion canonical(Tier t) { const TierDef d = def(t); return Emotion{d.valence, d.arousal, t}; }

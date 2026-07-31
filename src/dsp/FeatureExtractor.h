@@ -22,7 +22,7 @@ struct Features {
     float lowRatio = 0.0f;   // 低频(<=250Hz)能量占比 0..1,高=有贝斯/鼓(音乐)
     float mode = 0.0f;        // 调式倾向:-1 小调 .. +1 大调(chroma + key profile 估,valence 的"基因")
     float keyConfidence = 0.0f;  // 调式判定置信度(Pearson 相关 0..1,低=别太信 mode)
-    float keyMargin = 0.0f;   // 大调最佳 Pearson − 小调最佳 Pearson(-1..+1):
+    float keyMargin = 0.0f;   // 大调最佳 Pearson − 小调最佳 Pearson(各 ∈[-1,1],差 ∈ [-2, +2]):
                               //   「相关调同构」(C大调/A小调 chroma 一致)时 ≈0 → 调式模糊(伤感签名)
     float minorShare = 0.0f;  // 最近 ~1.7s 判为小调的帧占比 0..1(时间维度的调式倾向)
     SoundClass sound = SoundClass::Music;   // 场景判别结果
@@ -38,10 +38,8 @@ struct Features {
 
 class FeatureExtractor {
 public:
-    // 本地文件音源:PCM 窗口 → FFT → 全特征
+    // PCM 窗口 → FFT → 全特征。本地文件 + 网页扩展(扩展推 PCM,同路径,chroma/调式才准)
     void compute(const float* mono, int n, int sampleRate, float analysisHz, Features& out);
-    // 网页音源:已算好的频谱 bins(0..255)+ rms → 全特征(不重 FFT)
-    void computeFromBins(const uint8_t* bins, int n, float rms, Features& out);
 
     // 调式诊断:上一帧 key 估计的完整信息(mode 只用"谁赢",这里保留大小调各自
     // 最佳 Pearson 与胜负差距 margin)。margin 是「大调赢小调多少」的分级量:
@@ -69,8 +67,7 @@ private:
     float minorShare_ = 0.0f;                    // 小调帧占比的滚动平均(α=0.02,~1.7s)
     SoundClass prevSound_ = SoundClass::Music;   // 场景平滑(抗 EDM 合成段 flatness 越界导致的 Music↔Noise 抖动)
     int soundDissent_ = 0;                        // 连续与 prevSound_ 不一致的帧数
-    std::vector<float> prevMag_;                 // 上帧幅度(compute 用)
-    std::vector<float> prevBinsMag_;             // 上帧幅度(computeFromBins 用)
+    std::vector<float> prevMag_;                 // 上帧幅度(正谱差通量用)
     std::vector<float> onsetHistory_;            // 低频 onset 包络历史(喂 BPM)
     std::vector<float> bpmHistory_;              // 最近 BPM 估计(中值滤波抗野值)
     float prevBpm_ = 0.0f;
