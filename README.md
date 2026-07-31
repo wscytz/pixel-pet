@@ -11,6 +11,8 @@
 
 A tiny always-on-top desktop pet that turns the music you're listening to into a living **pixel kaomoji face** — happy songs smile and hop, sad ballads droop and slow down, dubstep bares its fangs. Pure algorithmic emotion recognition, **no ML models**.
 
+![16 expression tiers — 10 auto-detected emotions + 6 manual activity modes](assets/faces.png)
+
 ## What it does
 
 While audio plays, the pet continuously analyzes the signal and maps it onto a 2D **valence–arousal** emotion space (from the circumplex model), then drives a programmatically-drawn LED-style kaomoji face, its colors, and its motion.

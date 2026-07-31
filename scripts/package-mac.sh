@@ -49,6 +49,21 @@ rm -rf "$DST/Contents/Frameworks/QtQuick.framework" \
        "$DST/Contents/Frameworks/QtQmlWorkerScript.framework" \
        "$DST/Contents/Frameworks/QtOpenGL.framework"
 
+echo "=== 瘦架构:删 framework/插件的 x86_64 切片 ==="
+# CI 的 aqtinstall Qt 是 universal(x86_64+arm64),但 pixel-pet 主二进制 arm64-only
+# (macos-latest=ARM runner 编出)→ framework 的 x86_64 切片是死重量,删掉不损失兼容性
+# (Intel Mac 本就跑不了 arm64 主二进制)。本地 Homebrew Qt 已 arm64-only,lipo 无操作。
+# 必须在 codesign 前做(改了二进制 → codesign --deep 重签)。
+thin_one() {
+    [ -f "$1" ] || return 0
+    lipo -info "$1" 2>/dev/null | grep -q x86_64 || return 0
+    lipo -remove x86_64 -output "$1.tmp" "$1" && mv "$1.tmp" "$1" || true
+}
+for fw in "$DST/Contents/Frameworks"/*.framework; do
+    thin_one "$fw/Versions/A/$(basename "$fw" .framework)"
+done
+find "$DST/Contents/PlugIns" -name '*.dylib' | while IFS= read -r f; do thin_one "$f"; done
+
 echo "=== 浏览器扩展进包(网页音频必需;从 dmg 拖出后"加载已解压的扩展程序")==="
 cp -R browser-extension dist-stage/PixelPet-浏览器扩展
 

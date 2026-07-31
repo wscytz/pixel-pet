@@ -103,6 +103,33 @@ int main(int argc, char* argv[]) {
         return 0;
     }
 
+    // --sheet <out.png> [cellPx]:16 档脸谱图(4×4)—— README demo 用,复用 PetWidget 渲染
+    if (argc >= 3 && std::strcmp(argv[1], "--sheet") == 0) {
+        const int cell = (argc >= 4) ? std::clamp(std::atoi(argv[3]), 80, 520) : 200;
+        constexpr int cols = 4, rows = 4;   // 16 档 = 10 情绪 + 6 活动
+        QImage sheet(cell * cols, cell * rows, QImage::Format_ARGB32_Premultiplied);
+        sheet.fill(Qt::transparent);
+        QPainter p(&sheet);
+        PetWidget w;
+        w.resize(cell, cell);
+        w.show();
+        float demo[48];
+        for (int i = 0; i < 48; ++i) {
+            float v = 0.35f + 0.45f * std::sin(i * 0.45f) + 0.15f * std::sin(i * 1.3f);
+            demo[i] = v < 0 ? 0 : (v > 1 ? 1 : v);
+        }
+        w.setSpectrum(demo, 48);
+        for (int t = 0; t < kTierCount; ++t) {
+            w.snapEmotion(EmotionMapper::canonical(static_cast<Tier>(t)), static_cast<Genre>(0));
+            w.repaint();
+            p.drawPixmap((t % cols) * cell, (t / cols) * cell, cell, cell, w.grab());
+        }
+        p.end();
+        sheet.save(QString::fromUtf8(argv[2]));
+        std::fprintf(stderr, "=== sheet: %d 档 %dx%d → %s ===\n", kTierCount, cell * cols, cell * rows, argv[2]);
+        return 0;
+    }
+
     // --icon <out.png> [size]:渲染单张图标 PNG(预览用)
     if (argc >= 3 && std::strcmp(argv[1], "--icon") == 0) {
         const int sz = (argc >= 4) ? std::max(16, std::atoi(argv[3])) : 1024;
