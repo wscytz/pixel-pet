@@ -1,3 +1,5 @@
+[English](README.md) | [简体中文](README.zh-CN.md)
+
 # PixelPet
 
 [![CI](https://github.com/wscytz/pixel-pet/actions/workflows/build.yml/badge.svg)](https://github.com/wscytz/pixel-pet/actions/workflows/build.yml)
