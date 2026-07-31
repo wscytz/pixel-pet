@@ -17,7 +17,7 @@ jobs:
       - name: Install Qt
         uses: jurplel/install-qt-action@v4
         with:
-          version: '6.7.2'
+          version: '6.8.2'
           arch: 'clang_64'
           modules: 'qtmultimedia qtwebsockets'
       - name: Configure
@@ -42,7 +42,7 @@ jobs:
       - name: Install Qt(MSVC)
         uses: jurplel/install-qt-action@v4
         with:
-          version: '6.7.2'
+          version: '6.8.2'
           arch: 'win64_msvc2022_64'
           modules: 'qtmultimedia qtwebsockets'
       - name: Configure
