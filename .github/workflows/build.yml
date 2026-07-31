@@ -31,10 +31,12 @@ jobs:
           cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
       - name: Build
         run: cmake --build build -j
-      - name: Regression(16 表情档脸 + 分析器冒烟)
+      - name: Regression(16 表情档脸 + 分析器冒烟 + 单元测试)
         run: |
           bash scripts/dump-faces.sh
           cmake --build build --target analyze -j
+          cmake --build build --target pp_test -j
+          ./build/pp_test
       - name: Package(.dmg)
         run: bash scripts/package-mac.sh
       - uses: actions/upload-artifact@v4

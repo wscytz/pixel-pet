@@ -93,6 +93,16 @@ if(NOT MSVC)
     target_compile_options(analyze PRIVATE -Wall -Wextra -Wpedantic)
 endif()
 
+# 单元测试:纯算法(FFT/EmotionMapper),无 Qt 无框架,CI Regression 跑。
+add_executable(pp_test tools/test.cpp
+    src/dsp/FFT.h              src/dsp/FFT.cpp
+    src/emotion/Emotion.h
+    src/emotion/EmotionMapper.h src/emotion/EmotionMapper.cpp)
+target_include_directories(pp_test PRIVATE src)
+if(NOT MSVC)
+    target_compile_options(pp_test PRIVATE -Wall -Wextra -Wpedantic)
+endif()
+
 # 警告标志仅 GNU/Clang(MSVC 不认 -W 系列)
 # -Werror=switch:漏枚举 case 一律构建失败(扩 Tier 时兜住 Palette/canonical 等穷举 switch)
 if(NOT MSVC)
