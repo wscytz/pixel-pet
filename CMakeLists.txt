@@ -74,7 +74,7 @@ if(APPLE)
 endif()
 
 if(WIN32)
-    target_link_libraries(pixel-pet PRIVATE ole32 mmdevapi)  # WASAPI loopback(SystemAudioSource_win.cpp)
+    target_link_libraries(pixel-pet PRIVATE ole32 mmdevapi uuid)  # WASAPI loopback(SystemAudioSource_win.cpp;uuid 供 COM 接口 GUID)
 endif()
 
 # 调参自检工具:无 Qt 头less 音频特征分析(不参与发布,offline 跑真歌迭代算法)

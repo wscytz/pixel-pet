@@ -21,9 +21,9 @@ jobs:
           python3 -m pip install --break-system-packages --quiet aqtinstall
           aqt install-qt mac desktop 6.11.1 clang_64 --outputdir "$HOME/Qt"
       - name: Configure
-        env:
-          CMAKE_PREFIX_PATH: $HOME/Qt/6.11.1/macos
-        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+        run: |
+          export CMAKE_PREFIX_PATH="$HOME/Qt/6.11.1/macos"   # 在 shell 展开 $HOME(env: 块不展开)
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
       - name: Build
         run: cmake --build build -j
       - name: Regression(16 表情档脸 + 分析器冒烟)
