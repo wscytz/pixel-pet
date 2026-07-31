@@ -1,0 +1,21 @@
+# 构建产物
+build/
+dist/
+
+# 个人/本地文档(设计规格等,不公开)
+docs/
+
+# macOS
+.DS_Store
+
+# 采集样本(带情绪标签的私有音频)
+samples/
+*.mp3
+*.wav
+*.m4a
+*.flac
+
+# IDE / 工具
+.idea/
+.vscode/
+.claude/

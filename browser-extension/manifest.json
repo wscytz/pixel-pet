@@ -1,0 +1,19 @@
+{
+  "manifest_version": 3,
+  "name": "PixelPet Audio Capture",
+  "version": "0.1.0",
+  "description": "捕获当前标签页音频,推频谱给 PixelPet 桌宠(ws://127.0.0.1:17632)",
+  "permissions": ["tabCapture", "offscreen", "activeTab"],
+  "host_permissions": ["<all_urls>"],
+  "background": { "service_worker": "background.js" },
+  "action": { "default_popup": "popup.html", "default_title": "PixelPet 抓音频" },
+  "commands": {
+    "toggle-capture": {
+      "suggested_key": { "default": "Ctrl+Shift+0", "mac": "Command+Shift+0" },
+      "description": "开始/停止抓当前标签页音频(任意网页播放站点)"
+    }
+  },
+  "content_security_policy": {
+    "extension_pages": "script-src 'self'; object-src 'self'; connect-src 'self' ws://127.0.0.1:17632"
+  }
+}

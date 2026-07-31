@@ -1,0 +1,83 @@
+# 跨端构建 + 打包 CI(macOS 本机 + Windows MSVC)。
+# 目的:① 保同一份源码两平台都能编(尤其 SystemAudioSource_win.cpp 的 WASAPI 在 MSVC 下能过)
+#       ② 每次 push 出一份可分发产物(dmg / exe+Qt DLL)
+# 触发:push / PR / 手动。
+name: build
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Qt
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: '6.7.2'
+          arch: 'clang_64'
+          modules: 'qtmultimedia qtwebsockets'
+      - name: Configure
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+      - name: Build
+        run: cmake --build build -j
+      - name: Regression(16 表情档脸 + 分析器冒烟)
+        run: |
+          bash scripts/dump-faces.sh
+          cmake --build build --target analyze -j
+      - name: Package(.dmg)
+        run: bash scripts/package-mac.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: PixelPet-macOS
+          path: dist/
+
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Qt(MSVC)
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: '6.7.2'
+          arch: 'win64_msvc2022_64'
+          modules: 'qtmultimedia qtwebsockets'
+      - name: Configure
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+      - name: Build(WASAPI loopback 在此编过)
+        run: cmake --build build --config Release -j
+      - name: Deploy(windeployqt 打 Qt DLL)
+        run: |
+          windeployqt --release --no-translations build\Release\pixel-pet.exe
+      - uses: actions/upload-artifact@v4
+        with:
+          name: PixelPet-Windows
+          path: build/Release/
+
+  # tag(v*) → 收集两平台产物 → GitHub Release(附件:dmg + windows zip)
+  release:
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: [macos, windows]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: PixelPet-macOS
+          path: artifacts/macos
+      - uses: actions/download-artifact@v4
+        with:
+          name: PixelPet-Windows
+          path: artifacts/windows
+      - name: Zip Windows(整个 Release 目录可分发)
+        run: |
+          cd artifacts/windows && zip -r ../PixelPet-Windows.zip . && cd ../..
+          ls -la artifacts/
+      - uses: softprops/action-gh-release@v2
+        with:
+          draft: true
+          files: |
+            artifacts/macos/**/*.dmg
+            artifacts/PixelPet-Windows.zip

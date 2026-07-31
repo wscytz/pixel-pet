@@ -1,0 +1,20 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  body { font-family: system-ui, sans-serif; width: 220px; padding: 12px; }
+  button { width: 100%; padding: 8px; margin: 4px 0; font-size: 13px; cursor: pointer; border-radius: 6px; border: none; }
+  .go { background: #4a9; color: #fff; }
+  .stop { background: #d66; color: #fff; }
+  #status { font-size: 11px; color: #666; margin-top: 6px; min-height: 16px; }
+</style>
+</head>
+<body>
+  <b>PixelPet 抓音频</b>
+  <button class="go" id="start">开始抓当前标签</button>
+  <button class="stop" id="stop">停止</button>
+  <div id="status"></div>
+  <script src="popup.js"></script>
+</body>
+</html>

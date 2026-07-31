@@ -1,0 +1,130 @@
+#include "audio/SystemAudioSource.h"
+
+#ifdef Q_OS_WIN
+
+#include <QtGlobal>
+#include <QVector>
+
+#include <atomic>
+#include <thread>
+
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+#include <mmdeviceapi.h>   // IMMDeviceEnumerator, CLSID_MMDeviceEnumerator, eRender/eConsole
+#include <audioclient.h>   // IAudioClient, AUDCLNT_STREAMFLAGS_LOOPBACK, IAudioCaptureClient
+
+// Windows WASAPI loopback:抓「默认输出设备」的混音(任何 app 的声音都经过这里),
+// 下混 mono float,按 ~2048 样本切片发 pcmFrame。复用 FeatureExtractor::compute(PCM 路径,
+// 低频/BPM 质量比网页 bins 路径好)。线程独立 + atomic stop flag,避开 QThread 亲和性坑。
+
+struct SystemAudioSource::Impl {
+    IAudioClient* client = nullptr;
+    IAudioCaptureClient* capture = nullptr;
+    WAVEFORMATEX* wfx = nullptr;
+    std::thread th;
+    std::atomic<bool> run{false};
+    int sr = 48000;
+    int channels = 2;
+    bool isFloat = false;     // mix format 通常是 IEEE float32/48k
+    int frameBytes = 8;       // nBlockAlign
+};
+
+SystemAudioSource::SystemAudioSource(QObject* parent)
+    : QObject(parent), impl_(new Impl) {}
+
+SystemAudioSource::~SystemAudioSource() { stop(); delete impl_; }
+
+bool SystemAudioSource::start() {
+    if (active_ || !impl_) return false;
+    // 主线程 COM:Qt 可能已把主线程设成 STA,再 init MTA 会 RPC_E_CHANGED_MODE —— 忽略,
+    // 继续用现有 apartment(CoCreateInstance 跨 apt 仍可用)。
+    HRESULT ci = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+    Q_UNUSED(ci);
+
+    IMMDeviceEnumerator* en = nullptr;
+    if (FAILED(CoCreateInstance(CLSID_MMDeviceEnumerator, nullptr, CLSCTX_ALL,
+                                IID_PPV_ARGS(&en))) || !en)
+        return false;
+    IMMDevice* dev = nullptr;
+    HRESULT hr = en->GetDefaultAudioEndpoint(eRender, eConsole, &dev);
+    en->Release();
+    if (FAILED(hr) || !dev) return false;
+    hr = dev->Activate(IID_IAudioClient, CLSCTX_ALL, nullptr,
+                       reinterpret_cast<void**>(&impl_->client));
+    dev->Release();
+    if (FAILED(hr) || !impl_->client) return false;
+
+    hr = impl_->client->GetMixFormat(&impl_->wfx);
+    if (FAILED(hr) || !impl_->wfx) { stop(); return false; }
+    impl_->sr = static_cast<int>(impl_->wfx->nSamplesPerSec);
+    impl_->channels = static_cast<int>(impl_->wfx->nChannels);
+    impl_->frameBytes = impl_->wfx->nBlockAlign;
+    // mix format 几乎总是 float32(EXTENSIBLE + 32bit IEEE);少数 int16。按位深判够用。
+    impl_->isFloat = (impl_->wfx->wFormatTag == WAVE_FORMAT_IEEE_FLOAT) ||
+                     (impl_->wfx->wFormatTag == WAVE_FORMAT_EXTENSIBLE &&
+                      impl_->wfx->wBitsPerSample == 32);
+
+    const REFERENCE_TIME dur = 10 * 1000 * 1000;   // 1s 缓冲(reftimes = 100ns)
+    hr = impl_->client->Initialize(AUDCLNT_SHAREMODE_SHARED, AUDCLNT_STREAMFLAGS_LOOPBACK,
+                                   dur, 0, impl_->wfx, nullptr);
+    if (FAILED(hr)) { stop(); return false; }
+    hr = impl_->client->GetService(IID_IAudioCaptureClient,
+                                   reinterpret_cast<void**>(&impl_->capture));
+    if (FAILED(hr) || !impl_->capture) { stop(); return false; }
+    hr = impl_->client->Start();
+    if (FAILED(hr)) { stop(); return false; }
+
+    impl_->run = true;
+    active_ = true;
+    emit activeChanged(true);
+    impl_->th = std::thread([this] { loop(); });
+    return true;
+}
+
+void SystemAudioSource::stop() {
+    if (!impl_) return;
+    impl_->run = false;
+    if (impl_->th.joinable()) impl_->th.join();
+    if (impl_->capture) { impl_->capture->Release(); impl_->capture = nullptr; }
+    if (impl_->client)  { impl_->client->Stop(); impl_->client->Release(); impl_->client = nullptr; }
+    if (impl_->wfx)     { CoTaskMemFree(impl_->wfx); impl_->wfx = nullptr; }
+    if (active_) { active_ = false; emit activeChanged(false); }
+}
+
+void SystemAudioSource::loop() {
+    CoInitializeEx(nullptr, COINIT_MULTITHREADED);   // 捕获线程走 MTA
+    constexpr int winSize = 2048;                     // 对齐 FeatureExtractor::kN
+    QVector<float> buf;
+    buf.reserve(winSize * 2);
+    while (impl_->run) {
+        UINT32 count = 0, flags = 0;
+        LPBYTE data = nullptr;
+        const HRESULT hr = impl_->capture->GetBuffer(&data, &count, &flags, nullptr, nullptr);
+        if (hr == AUDCLNT_S_BUFFER_EMPTY) { Sleep(5); continue; }
+        if (FAILED(hr)) { Sleep(10); continue; }
+        if (!(flags & AUDCLNT_BUFFERFLAGS_SILENT) && data && count > 0) {
+            const int ch = impl_->channels;
+            const bool fl = impl_->isFloat;
+            for (UINT32 i = 0; i < count; ++i) {
+                const BYTE* frame = data + (i * impl_->frameBytes);
+                float s = 0.0f;
+                if (fl) {
+                    const auto* p = reinterpret_cast<const float*>(frame);
+                    for (int c = 0; c < ch; ++c) s += p[c];
+                } else {
+                    const auto* p = reinterpret_cast<const short*>(frame);
+                    for (int c = 0; c < ch; ++c) s += p[c] / 32768.0f;
+                }
+                buf.append(s / static_cast<float>(ch));   // 多声道均值 → mono
+            }
+        }
+        impl_->capture->ReleaseBuffer(count);
+        while (buf.size() >= winSize) {
+            emit pcmFrame(buf.mid(0, winSize), impl_->sr);   // mid 拷贝 → 队列跨线程安全
+            buf.remove(0, winSize);
+        }
+    }
+    CoUninitialize();
+}
+
+#endif  // Q_OS_WIN
