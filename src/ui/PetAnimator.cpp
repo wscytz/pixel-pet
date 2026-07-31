@@ -33,6 +33,14 @@ void PetAnimator::setBeat(float b) {
     else          { hasExtBeat_ = true;  extBeat_ = b; }
 }
 
+void PetAnimator::setSectionBoost(float b) {
+    sectionBoostTarget_ = b < 0.0f ? 0.0f : (b > 1.0f ? 1.0f : b);
+}
+
+void PetAnimator::setDance(float d) {
+    dance_ = d < 0.0f ? 0.0f : (d > 1.0f ? 1.0f : d);
+}
+
 void PetAnimator::resetSwitch() {
     // 音乐中断后恢复:清滞回计时 + 把当前档记为 prev,允许立即重判(中断不粘滞)。
     // 与「连续播放中的抖动吃粘滞」区分 —— 切歌/暂停/断流后重新检测不被压。
@@ -64,6 +72,13 @@ void PetAnimator::tick(int dtMs) {
 
     valence_ += (target_.valence - valence_) * 0.05f;
     arousal_  += (target_.arousal  - arousal_)  * 0.05f;
+    sectionBoost_ += (sectionBoostTarget_ - sectionBoost_) * 0.04f;   // 段表现力平滑(切换不突跳)
+
+    // 情绪轨迹:当前 vs 慢参考(近 ~3s 基线)。音乐在往哪走 → 期待感/呼吸
+    traj_.feed(valence_, arousal_, 60.0f);
+    const float momentum = traj_.momentum();
+    float b = 0.5f + traj_.driftA() * 2.0f;
+    build_ = b < 0.0f ? 0.0f : (b > 1.0f ? 1.0f : b);
 
     const GenreTheme& th = Palette::theme(genre_);
 
@@ -88,6 +103,20 @@ void PetAnimator::tick(int dtMs) {
     color_  = lerpC(color_,  Palette::tierColor(disp),  0.08f);
     accent_ = lerpC(accent_, Palette::tierAccent(disp), 0.08f);
 
+    // 2b) 混合情感:主档脸 + 旧档色微渗。换档后 6s 内把「刚离开的档」颜色轻微渗入当前,
+    //     —— 伤感→欢快 的过渡期带一点旧色,表达"混合"而不改判档。
+    //     纯展示层色混,不依赖第二个分类器(判得准不准不影响主档),见 #65。
+    if (!manual_ && !idle_) {
+        const float sinceSwitch = tMs_ - lastTierSwitchMs_;
+        if (sinceSwitch >= 0.0f && sinceSwitch < 6000.0f) {
+            const float bleed = (1.0f - sinceSwitch / 6000.0f) * 0.35f;
+            if (bleed > 0.0f) {
+                color_  = lerpC(color_,  Palette::tierColor(prevTier_),  bleed * 0.3f);
+                accent_ = lerpC(accent_, Palette::tierAccent(prevTier_), bleed * 0.3f);
+            }
+        }
+    }
+
     // 3) 动画参数
     float beat = 0.0f;
     if (idle_ && !manual_) {
@@ -102,18 +131,21 @@ void PetAnimator::tick(int dtMs) {
     } else {
         float period = 900.0f - 520.0f * arousal_;
         if (period < 260.0f) period = 260.0f;
+        period *= (1.0f - 0.12f * momentum);   // 音乐在运动 → 呼吸加快(期待峰值)
         st_.facePhase = std::fmod(tMs_ / period, 1.0f);
         if (st_.facePhase < 0.0f) st_.facePhase += 1.0f;
         const float bp = std::fmod(tMs_ / 3500.0f, 1.0f);
         st_.blink = (bp < 0.035f) ? 1.0f : 0.0f;
         const float sp = 0.004f * (0.5f + arousal_);
-        st_.mouthOpen = 0.5f + 0.5f * std::sin(tMs_ * sp);
+        st_.mouthOpen = 0.5f + 0.5f * (0.7f + 0.6f * sectionBoost_) * (0.85f + 0.3f * build_) * std::sin(tMs_ * sp);
         // 踩拍:真实音频能量优先(手动也随真曲跳),否则假 bpm 节拍器
         const float beatMs = 60000.0f / th.bpm;
         const float bphase = std::fmod(tMs_, beatMs) / beatMs;
         const float atk = (th.bpm > 100.0f) ? 0.12f : 0.25f;
         const float fakeBeat = (bphase < atk) ? (1.0f - bphase / atk) : 0.0f;
         beat = hasExtBeat_ ? extBeat_ : fakeBeat;
+        // 副歌表现力 + 律动密度 + 情绪动量:踩拍幅度(Intro/Outro 收着;无底鼓轻;音乐在涨更带劲)
+        beat *= (0.65f + 0.5f * sectionBoost_) * (0.85f + 0.3f * dance_) * (0.9f + 0.2f * momentum);
     }
     if (blinkOnce_) { st_.blink = 1.0f; blinkOnce_ = false; }
 

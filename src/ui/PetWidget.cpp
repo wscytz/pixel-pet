@@ -28,6 +28,12 @@
 #include <QIcon>
 #include <QSettings>
 #include <QScreen>
+#include <QDialog>
+#include <QLabel>
+#include <QPushButton>
+#include <QVBoxLayout>
+
+#include "ui/FocusStats.h"
 #include <QGuiApplication>
 #include <QWheelEvent>
 #include <QResizeEvent>
@@ -78,6 +84,7 @@ PetWidget::PetWidget(QWidget* parent) : QWidget(parent) {
     setMinimumSize(150, 150);        // 阴影边距由 PetScene 的 SH 处理;尺寸可缩到迷你宠物档
     setMaximumSize(520, 520);
     clock_.start();
+    stats_.load();                              // 专注周报数据(手动活动档时长)
     connect(&timer_, &QTimer::timeout, this, &PetWidget::onTick);
     timer_.start(16);
 
@@ -270,6 +277,7 @@ void PetWidget::resizeEvent(QResizeEvent* e) {
 }
 
 void PetWidget::closeEvent(QCloseEvent* e) {
+    stats_.save();      // 退出前落盘专注时长
     saveSettings();
     QWidget::closeEvent(e);
 }
@@ -297,6 +305,11 @@ void PetWidget::loadSettings() {
     setCursor(locked_ ? Qt::ArrowCursor : Qt::OpenHandCursor);
     if (const int es = s.value("eqStyle", 0).toInt(); es >= 0 && es <= 2)
         eqStyle_ = static_cast<EqStyle>(es);
+    // 用户校准(minorShare 分界)恢复
+    if (s.contains("calibrate/happy"))
+        EmotionMapper::setUserCalibration(
+            static_cast<float>(s.value("calibrate/happy", 0.30).toDouble()),
+            static_cast<float>(s.value("calibrate/sad", 0.55).toDouble()));
 }
 
 void PetWidget::saveSettings() {
@@ -307,6 +320,8 @@ void PetWidget::saveSettings() {
     s.setValue("opacity", opacity_);
     s.setValue("locked", locked_);
     s.setValue("eqStyle", static_cast<int>(eqStyle_));
+    s.setValue("calibrate/happy", static_cast<double>(EmotionMapper::happyThresh()));
+    s.setValue("calibrate/sad", static_cast<double>(EmotionMapper::sadThresh()));
 }
 
 void PetWidget::onAnalyze() {
@@ -336,6 +351,7 @@ void PetWidget::onSystemAudio(const QVector<float>& mono, int sr) {
 
 void PetWidget::applyFeatures(const Features& f) {
     curRms_ = f.rms;
+    lastMinorShare_ = f.minorShare;   // 校准对话框实时录制用
     const qint64 nowMs = clock_.elapsed();
     if (nowMs - lastAudioMs_ > 1500) anim_.resetSwitch();   // 中断>1.5s 后恢复:重新检测,不粘滞
     lastAudioMs_ = nowMs;
@@ -344,6 +360,20 @@ void PetWidget::applyFeatures(const Features& f) {
         setEmotion(EmotionMapper::map(f));
         setGenre(EmotionMapper::guessGenre(f));
     }
+
+    // 结构段表现力:副歌 1.0(踩拍更猛/嘴张更大),Intro·Outro 0.15(收着),主歌/未知 0.5
+    // (1Hz+滞回,段切换有 ~3s 惯性;前 20s 不给副歌 —— 历史不足别误判)
+    float boost = 0.5f;
+    switch (f.section) {
+        case Section::Chorus: boost = 1.0f;  break;
+        case Section::Bridge: boost = 0.7f;  break;
+        case Section::Intro:
+        case Section::Outro:  boost = 0.15f; break;
+        case Section::Unknown:
+        case Section::Verse:  boost = 0.5f;  break;
+    }
+    anim_.setSectionBoost(boost);
+    anim_.setDance(f.rhythmKickDensity);   // 底鼓密度 → 弹跳幅度(EDM 跳得欢,抒情轻摆)
 
     // 调试打印(500ms 一次):看 SoundClass 判定准不准,据此手调阈值
     const qint64 now = clock_.elapsed();
@@ -360,8 +390,8 @@ void PetWidget::applyFeatures(const Features& f) {
         const int raw = static_cast<int>(e.tier);              // 当前判据(基因)直判档
         const int shw = static_cast<int>(anim_.state().tier);  // 实际显示(平滑+粘滞)
         std::fprintf(stderr,
-            "[dsp] %-7s rms=%.3f bpm=%.0f conf=%.2f mode=%+.2f kconf=%.2f mg=%+.2f ms=%.2f val=%+.2f aro=%.2f raw=%d show=%d | %s\n",
-            sn, f.rms, f.bpm, f.bpmConfidence, f.mode, f.keyConfidence,
+            "[dsp] %-7s %-6s rms=%.3f bpm=%.0f conf=%.2f mode=%+.2f kconf=%.2f mg=%+.2f ms=%.2f val=%+.2f aro=%.2f raw=%d show=%d | %s\n",
+            sn, sectionName(f.section), f.rms, f.bpm, f.bpmConfidence, f.mode, f.keyConfidence,
             f.keyMargin, f.minorShare, e.valence, e.arousal, raw, shw,
             lastTitle_.toUtf8().constData());
     }
@@ -371,6 +401,119 @@ void PetWidget::updateIdle(float rms, int dtMs) {
     // RMS 持续 <0.015 超 2s → idle;有声立即归零退出。dt 用 onTick 真实间隔。
     quietMs_ = (rms < 0.015f) ? quietMs_ + static_cast<float>(dtMs) : 0.0f;
     anim_.setIdle(quietMs_ > 2000.0f);
+}
+
+void PetWidget::showFocusReport() {
+    const auto days = stats_.lastDays(7);
+    QString txt = "专注周报 · 过去 7 天(手动活动档时长)\n";
+    txt += QString(30, QChar(0x2500)) + "\n";
+    for (const auto& d : days) {
+        txt += d.date + "  ";
+        if (d.tiers.isEmpty()) { txt += "—\n"; continue; }
+        QList<int> keys = d.tiers.keys();
+        std::sort(keys.begin(), keys.end());
+        bool first = true;
+        for (int k : keys) {
+            if (!first) txt += "   ";
+            first = false;
+            txt += QString::fromUtf8(EmotionMapper::def(static_cast<Tier>(k)).name)
+                 + " " + FocusStats::fmtHours(d.tiers.value(k));
+        }
+        txt += "   合计 " + FocusStats::fmtHours(d.total()) + "\n";
+    }
+    qint64 weekTotal = 0, maxDay = 1;
+    for (const auto& d : days) { weekTotal += d.total(); maxDay = std::max(maxDay, d.total()); }
+    txt += QString(30, QChar(0x2500)) + "\n";
+    txt += "本周合计 " + FocusStats::fmtHours(weekTotal) + "\n\n";
+    for (const auto& d : days) {   // 每日相对条
+        const int bar = static_cast<int>(20.0 * d.total() / maxDay);
+        txt += d.date + " " + QString(bar, QChar(0x2588)) + "\n";
+    }
+    txt += "\n(手动活动档真实计时;退回自动模式即停)";
+    QDialog dlg(this);
+    dlg.setWindowTitle("专注周报");
+    auto* lbl = new QLabel(txt, &dlg);
+    lbl->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    auto* btn = new QPushButton("关闭", &dlg);
+    connect(btn, &QPushButton::clicked, &dlg, &QDialog::accept);
+    auto* lay = new QVBoxLayout(&dlg);
+    lay->addWidget(lbl);
+    lay->addWidget(btn, 0, Qt::AlignRight);
+    dlg.resize(360, 320);
+    dlg.exec();
+}
+
+void PetWidget::showCalibrationDialog() {
+    QDialog dlg(this);
+    dlg.setWindowTitle("情绪校准");
+    auto* lbl = new QLabel(&dlg);
+    auto* stat = new QLabel(&dlg);
+    auto* next = new QPushButton("完成本段 →", &dlg);
+    auto* reset = new QPushButton("复原标准", &dlg);
+    auto* cancel = new QPushButton("取消", &dlg);
+    auto* lay = new QVBoxLayout(&dlg);
+    lay->addWidget(lbl);
+    lay->addWidget(stat);
+    auto* h = new QHBoxLayout;
+    h->addWidget(reset); h->addStretch(); h->addWidget(cancel); h->addWidget(next);
+    lay->addLayout(h);
+    dlg.resize(420, 230);
+
+    int phase = 0;                 // 0=录欢快 1=录伤感 2=完成
+    double hSum = 0, sSum = 0;
+    int hCnt = 0, sCnt = 0;
+
+    const QString stepText[2] = {
+        QStringLiteral("第 1 步:播放一首你觉得【欢快】的歌(任选音源),录 ~10s 后点「完成本段」"),
+        QStringLiteral("第 2 步:播放一首你觉得【伤感】的歌,录 ~10s 后点「应用校准」"),
+    };
+    lbl->setText(stepText[0]);
+    lbl->setWordWrap(true);
+
+    auto* poll = new QTimer(&dlg);
+    poll->setInterval(200);
+    QObject::connect(poll, &QTimer::timeout, &dlg, [&] {
+        const bool live = (clock_.elapsed() - lastAudioMs_ < 1200);   // 音频在推才算(防陈旧值)
+        if (live && lastMinorShare_ > 0.001f) {
+            if (phase == 0) { hSum += lastMinorShare_; ++hCnt; }
+            else if (phase == 1) { sSum += lastMinorShare_; ++sCnt; }
+        }
+        const int cnt = (phase == 0) ? hCnt : (phase == 1 ? sCnt : 0);
+        const double avg = cnt ? ((phase == 0 ? hSum : sSum) / cnt) : 0.0;
+        stat->setText(QStringLiteral("已录 %1s  minorShare均值 %2%3\n当前:欢快<%4 伤感>%5(标准 0.30/0.55)")
+            .arg(cnt / 5).arg(avg, 0, 'f', 3).arg(live ? "" : "  无音频,快放歌…")
+            .arg(EmotionMapper::happyThresh(), 0, 'f', 2)
+            .arg(EmotionMapper::sadThresh(), 0, 'f', 2));
+    });
+    QObject::connect(next, &QPushButton::clicked, &dlg, [&] {
+        if (phase == 0) {
+            if (hCnt < 40) { stat->setText("欢快段样本太少(需 ≥8s),再多放一会儿。"); return; }
+            phase = 1; lbl->setText(stepText[1]); next->setText("应用校准 ✓");
+        } else if (phase == 1) {
+            if (sCnt < 40) { stat->setText("伤感段样本太少(需 ≥8s),再多放一会儿。"); return; }
+            float ht = 0, st = 0;
+            EmotionMapper::calibrateFromMs(static_cast<float>(hSum / hCnt),
+                                           static_cast<float>(sSum / sCnt), ht, st);
+            EmotionMapper::setUserCalibration(ht, st);
+            saveSettings();
+            phase = 2; next->setEnabled(false);
+            stat->setText(QStringLiteral("欢快均值 %.3f  伤感均值 %.3f\n已应用:欢快<%1 伤感>%2\n(不满意可点「复原标准」重录)")
+                .arg(hSum / hCnt, 0, 'f', 3).arg(sSum / sCnt, 0, 'f', 3)
+                .arg(ht, 0, 'f', 2).arg(st, 0, 'f', 2));
+            lbl->setText("校准完成。");
+        }
+    });
+    QObject::connect(reset, &QPushButton::clicked, &dlg, [&] {
+        EmotionMapper::resetCalibration();
+        saveSettings();
+        phase = 0; hSum = sSum = 0; hCnt = sCnt = 0;
+        next->setEnabled(true); next->setText("完成本段 →");
+        lbl->setText(stepText[0]);
+        stat->setText("已复原标准阈值(0.30/0.55),可重录。");
+    });
+    QObject::connect(cancel, &QPushButton::clicked, &dlg, &QDialog::reject);
+    poll->start();
+    dlg.exec();
 }
 
 void PetWidget::togglePlay() {
@@ -388,6 +531,11 @@ void PetWidget::onTick() {
     const qint64 now = clock_.elapsed();
     int dt = lastMs_ ? static_cast<int>(std::min<qint64>(now - lastMs_, 50)) : 16;
     lastMs_ = now;
+
+    // 专注计时:手动活动档真实时长累计(退回自动即停);每 60s 落盘一次(避免写盘抖动)
+    if (manual_) stats_.addMs(static_cast<int>(manualTier_), dt);
+    if (now - lastStatsSaveMs_ > 60000) { stats_.save(); lastStatsSaveMs_ = now; }
+
     if (!haveRealAudio_) stepSim(dt);
 
     // idle 判定只在有真实音源时跑(模拟模式跳过)。统一在 onTick 用真实 dt,
@@ -541,6 +689,8 @@ void PetWidget::contextMenuEvent(QContextMenuEvent* e) {
     });
     m.addAction("打开文件…", this, [this]() { openFile(); });
     m.addAction("暂停 / 继续", this, [this]() { togglePlay(); });
+    m.addAction("专注周报…", this, [this]() { showFocusReport(); });
+    m.addAction("校准情绪…", this, [this]() { showCalibrationDialog(); });
 #ifdef Q_OS_WIN
     {   // 系统音频(WASAPI loopback):抓整个系统输出,接桌面客户端/任意 app
         QAction* a = m.addAction("系统音频");

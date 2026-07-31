@@ -70,6 +70,10 @@ jobs:
         shell: pwsh
         run: |
           & "D:\Qt\6.8.2\msvc2022_64\bin\windeployqt.exe" --release --no-translations build\Release\pixel-pet.exe
+      - name: 扩展进包(网页音频另一半,随 zip 一起分发)
+        shell: pwsh
+        run: |
+          Copy-Item -Recurse browser-extension "build\Release\PixelPet-浏览器扩展"
       - uses: actions/upload-artifact@v4
         with:
           name: PixelPet-Windows

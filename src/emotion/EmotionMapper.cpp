@@ -4,12 +4,42 @@
 
 #include <algorithm>
 
+namespace {
+// 用户校准的 minorShare 分界:默认 0.30/0.55(标准),setUserCalibration 可个性化。
+float g_happyThresh = 0.30f;   // 以下判持续大调(欢快基因)
+float g_sadThresh   = 0.55f;   // 以上判持续小调(伤感基因)
+
+constexpr float kHappyDefault = 0.30f;
+constexpr float kSadDefault   = 0.55f;
+}  // namespace
+
 namespace EmotionMapper {
+
+void setUserCalibration(float happyThresh, float sadThresh) {
+    g_happyThresh = std::clamp(happyThresh, 0.02f, 0.93f);
+    g_sadThresh = std::clamp(sadThresh, std::max(0.07f, g_happyThresh + 0.05f), 0.98f);
+}
+void resetCalibration() {
+    g_happyThresh = kHappyDefault;
+    g_sadThresh = kSadDefault;
+}
+float happyThresh() { return g_happyThresh; }
+float sadThresh()   { return g_sadThresh; }
+
+void calibrateFromMs(float happyMs, float sadMs, float& ht, float& st) {
+    // 拉开式:分界放在「欢快歌均值之上、伤感歌均值之下」,让两首锚定歌直接命中各自档。
+    //   默认 0.30/0.55 是宽模糊带(通用),校准就是为个人口味收紧 —— 锚点靠得近时带更窄(诚实)。
+    const float M = (happyMs + sadMs) * 0.5f;
+    ht = std::clamp(happyMs + 0.06f, 0.05f, 0.90f);
+    st = std::clamp(sadMs - 0.06f, 0.10f, 0.95f);
+    if (st <= ht) {                       // 锚点异常(重叠/标反):退回中点窄带,至少留分界
+        ht = std::clamp(M - 0.04f, 0.05f, 0.93f);
+        st = std::min(0.95f, ht + 0.08f);
+    }
+}
 
 // 自动识别分桶:只返回 10 个情绪档(序号 <10)。活动档(Focus/Work/Game/...)由手动
 // 模式设置,此处永不返回——未来若要自动判活动档需另行设计,别在这加 case 破坏契约。
-// 自动识别分桶:只返回 10 个情绪档。活动档(Focus/Work/Game/...)由手动模式设置,
-// 这里永远到不了——未来若要加自动识别,别让它返回活动档(会破坏手动/自动契约)。
 Tier mapTier(float valence, float arousal) {
     if (arousal > 0.72f) {
         if (valence > 0.35f)      return Tier::Hype;
@@ -86,8 +116,8 @@ Emotion map(const Features& f) {
             //   → 持续大调(ms<0.30)正;持续小调(ms>0.55)负;中间模糊:
             //     低能(arousal<0.55)→ 伤感(替代旧的 Calm/Healing 错判);高能 → 按 mode 符号(躁动/惊讶)
             float gene;
-            if (f.minorShare < 0.30f)                    gene = +f.mode;           // 持续大调 → 治愈/欢快
-            else if (f.minorShare > 0.55f)               gene = -f.keyConfidence;  // 持续小调 → 伤感/愤怒
+            if (f.minorShare < g_happyThresh)            gene = +f.mode;           // 持续大调 → 治愈/欢快(阈值可校准)
+            else if (f.minorShare > g_sadThresh)         gene = -f.keyConfidence;  // 持续小调 → 伤感/愤怒(阈值可校准)
             else if (f.keyMargin <= -0.20f)              gene = -f.keyConfidence;  // 模糊但强烈偏小调
             else if (arousal < 0.55f)                    gene = -0.5f;             // 真模糊+低能 → 伤感
             else                                         gene = f.mode;            // 真模糊+高能 → mode 符号

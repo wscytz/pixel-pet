@@ -11,6 +11,7 @@
 #include "dsp/FeatureExtractor.h"
 #include "emotion/Emotion.h"
 #include "emotion/EmotionMapper.h"
+#include "emotion/Trajectory.h"
 
 #include <cstdio>
 #include <cstdlib>
@@ -79,7 +80,86 @@ static bool readWav(const std::string& path, std::vector<float>& mono, int& sr) 
     return true;
 }
 
+// 跑一首歌,返回其 minorShare 均值(用户校准锚点用)。复用真 FeatureExtractor 链路,跳过静音。
+static bool songMinorShare(const char* path, float& meanMs) {
+    std::vector<float> mono;
+    int sr = 0;
+    if (!readWav(path, mono, sr)) return false;
+    const float analysisHz = 30.0f;
+    const int hop = std::max(1, static_cast<int>(sr / analysisHz));
+    constexpr int kN = 2048;
+    std::vector<float> win;
+    win.reserve(kN + hop);
+    FeatureExtractor fx;
+    double msSum = 0.0;
+    int cnt = 0;
+    for (size_t pos = 0; pos < mono.size(); pos += static_cast<size_t>(hop)) {
+        const size_t end = std::min(mono.size(), pos + static_cast<size_t>(hop));
+        for (size_t i = pos; i < end; ++i) win.push_back(mono[i]);
+        if (static_cast<int>(win.size()) > kN) win.erase(win.begin(), win.begin() + (win.size() - kN));
+        Features f;
+        fx.compute(win.data(), static_cast<int>(win.size()), sr, analysisHz, f);
+        if (f.sound == SoundClass::Silence) continue;
+        msSum += f.minorShare;
+        ++cnt;
+    }
+    if (cnt == 0) return false;
+    meanMs = static_cast<float>(msSum / cnt);
+    return true;
+}
+
+// 跑一首歌,返回占比最高的情绪档(校准验证用)。
+static Tier songTopTier(const char* path, int& topCount, int& total) {
+    std::vector<float> mono;
+    int sr = 0;
+    if (!readWav(path, mono, sr)) return Tier::Calm;
+    const float analysisHz = 30.0f;
+    const int hop = std::max(1, static_cast<int>(sr / analysisHz));
+    constexpr int kN = 2048;
+    std::vector<float> win;
+    win.reserve(kN + hop);
+    FeatureExtractor fx;
+    int cnt[kTierCount] = {};
+    total = 0;
+    for (size_t pos = 0; pos < mono.size(); pos += static_cast<size_t>(hop)) {
+        const size_t end = std::min(mono.size(), pos + static_cast<size_t>(hop));
+        for (size_t i = pos; i < end; ++i) win.push_back(mono[i]);
+        if (static_cast<int>(win.size()) > kN) win.erase(win.begin(), win.begin() + (win.size() - kN));
+        Features f;
+        fx.compute(win.data(), static_cast<int>(win.size()), sr, analysisHz, f);
+        if (f.sound == SoundClass::Silence) continue;
+        ++cnt[static_cast<int>(EmotionMapper::map(f).tier)];
+        ++total;
+    }
+    topCount = 0;
+    Tier top = Tier::Calm;
+    for (int i = 0; i < kTierCount; ++i) if (cnt[i] > topCount) { topCount = cnt[i]; top = static_cast<Tier>(i); }
+    return top;
+}
+
 int main(int argc, char** argv) {
+    if (argc >= 4 && std::strcmp(argv[1], "--calibrate") == 0) {
+        // 用户 A/B 校准:欢快/伤感两首锚定歌 → 个性化 minorShare 分界(离线算,和对话框同一套数学)
+        float h = 0.0f, s = 0.0f;
+        if (!songMinorShare(argv[2], h) || !songMinorShare(argv[3], s)) {
+            std::fprintf(stderr, "[calibrate] 校准失败(转 wav 或读不到音频)\n");
+            return 1;
+        }
+        float ht = 0.0f, st = 0.0f;
+        EmotionMapper::calibrateFromMs(h, s, ht, st);
+        std::fprintf(stderr, "[calibrate] 欢快歌 minorShare=%.3f  伤感歌 minorShare=%.3f\n", h, s);
+        std::fprintf(stderr, "[calibrate] 建议:EmotionMapper::setUserCalibration(%.2f, %.2f)\n", ht, st);
+        // 自检:应用校准后重跑两首歌,看是否命中目标档
+        EmotionMapper::setUserCalibration(ht, st);
+        int hc = 0, sc = 0, htot = 0, stot = 0;
+        const Tier hTop = songTopTier(argv[2], hc, htot);
+        const Tier sTop = songTopTier(argv[3], sc, stot);
+        std::fprintf(stderr, "[calibrate] 验证:欢快歌 top=%s(%d%%)  伤感歌 top=%s(%d%%)  ← 应分别为 欢快/伤感\n",
+                     EmotionMapper::def(hTop).name, htot ? 100 * hc / htot : 0,
+                     EmotionMapper::def(sTop).name, stot ? 100 * sc / stot : 0);
+        EmotionMapper::resetCalibration();   // 工具不动全局状态
+        return 0;
+    }
     if (argc < 2) {
         std::fprintf(stderr, "usage: analyze <song.wav> [analysisHz]\n");
         return 1;
@@ -102,6 +182,12 @@ int main(int argc, char** argv) {
 
     int tierCount[kTierCount] = {};
     int minorFrames = 0, majorFrames = 0, totalFrames = 0;
+    int secCount[6] = {};                 // Section 各段累计秒数
+    Section prevSec = Section::Unknown;   // 段落变化计数用
+    int secTrans = 0;
+    double rhythmBB = 0, rhythmDns = 0, rhythmSync = 0;   // 节奏型均值累加
+    int trajBucket[5] = {};                               // 升华/失落/蓄势/放松/平缓
+    TrajectoryTracker traj;
     double modeSum = 0, marginSum = 0, kconfSum = 0, valSum = 0, aroSum = 0, bpmSum = 0;
     double msSum = 0;
     int bpmFrames = 0;
@@ -127,6 +213,21 @@ int main(int argc, char** argv) {
         const int ti = static_cast<int>(e.tier);
         const auto& d = fx.lastKeyDiag();
 
+        // 情绪轨迹:当前 vs 慢参考 → 分桶。按「主导轴」判:valence 主导看升/落,
+        // arousal 主导看蓄势/放松。两轴天然摆幅不同(valence ±0.9,arousal ±0.1),
+        // 阈值分开:valence 0.15 / arousal 0.08,别让大一轴盖住小一轴。
+        traj.feed(e.valence, e.arousal, analysisHz);
+        const float dv = traj.driftV(), da = traj.driftA();
+        if (std::fabs(dv) >= std::fabs(da)) {
+            if (dv > 0.15f) ++trajBucket[0];
+            else if (dv < -0.15f) ++trajBucket[1];
+            else ++trajBucket[4];
+        } else {
+            if (da > 0.08f) ++trajBucket[2];
+            else if (da < -0.08f) ++trajBucket[3];
+            else ++trajBucket[4];
+        }
+
         ++totalFrames;
         if (d.major) ++majorFrames; else ++minorFrames;
         modeSum += f.mode; marginSum += d.margin; kconfSum += f.keyConfidence;
@@ -134,6 +235,7 @@ int main(int argc, char** argv) {
         valSum += e.valence; aroSum += e.arousal;
         if (f.bpm > 1.0f) { bpmSum += f.bpm; ++bpmFrames; }
         ++tierCount[ti];
+        rhythmBB += f.rhythmBackbeat; rhythmDns += f.rhythmKickDensity; rhythmSync += f.rhythmSyncop;
         if (f.minorShare < 0.30f) ++msBucket[0];
         else if (f.minorShare < 0.45f) ++msBucket[1];
         else if (f.minorShare < 0.55f) ++msBucket[2];
@@ -149,8 +251,14 @@ int main(int argc, char** argv) {
             const double k = framesThisSec;
             int topTier = 0;
             for (int i = 1; i < kTierCount; ++i) if (accTier[i] > accTier[topTier]) topTier = i;
-            std::fprintf(stderr, "t=%3d mode=%+5.2f kc=%4.2f mg=%+5.2f ms=%4.2f val=%+5.2f aro=%4.2f bpm=%5.1f top=%s(%d)\n",
-                         sec, accMode / k, accKconf / k, accMargin / k, accMs / k,
+            const Section s = f.section;
+            if (s != Section::Unknown) ++secCount[static_cast<int>(s)];
+            if (prevSec != Section::Unknown && s != prevSec) ++secTrans;
+            prevSec = s;
+            std::fprintf(stderr, "t=%3d sec=%-6s rep=%.2f nov=%.2f rms=%.3f bb=%.2f dns=%.2f drift=%+.2f mode=%+5.2f kc=%4.2f mg=%+5.2f ms=%4.2f val=%+5.2f aro=%4.2f bpm=%5.1f top=%s(%d)\n",
+                         sec, sectionName(s), fx.sectionRepeat(), fx.sectionNovelty(), f.rms,
+                         f.rhythmBackbeat, f.rhythmKickDensity, traj.driftV(),
+                         accMode / k, accKconf / k, accMargin / k, accMs / k,
                          accVal / k, accAro / k,
                          accBpmFrames ? accBpm / accBpmFrames : 0.0,
                          EmotionMapper::def(static_cast<Tier>(topTier)).name, accTier[topTier]);
@@ -170,6 +278,21 @@ int main(int argc, char** argv) {
                  majorFrames, minorFrames, 100.0 * minorFrames / std::max(1, totalFrames));
     std::fprintf(stderr, "[ms] <0.30大调=%d 0.30-0.45偏大=%d 0.45-0.55模糊=%d >0.55小调=%d\n",
                  msBucket[0], msBucket[1], msBucket[2], msBucket[3]);
+    std::fprintf(stderr, "[sec] Intro=%ds Verse=%ds Chorus=%ds Bridge=%ds Outro=%ds 段变化=%d次\n",
+                 secCount[static_cast<int>(Section::Intro)],
+                 secCount[static_cast<int>(Section::Verse)],
+                 secCount[static_cast<int>(Section::Chorus)],
+                 secCount[static_cast<int>(Section::Bridge)],
+                 secCount[static_cast<int>(Section::Outro)],
+                 secTrans);
+    std::fprintf(stderr, "[rhythm] backbeat=%.2f(反拍 snare 2/4) kickDensity=%.2f(每拍底鼓) syncop=%.2f(offbeat)\n",
+                 rhythmBB / k, rhythmDns / k, rhythmSync / k);
+    std::fprintf(stderr, "[traj] 升华=%d%% 失落=%d%% 蓄势=%d%% 放松=%d%% 平缓=%d%%\n",
+                 static_cast<int>(100.0 * trajBucket[0] / totalFrames),
+                 static_cast<int>(100.0 * trajBucket[1] / totalFrames),
+                 static_cast<int>(100.0 * trajBucket[2] / totalFrames),
+                 static_cast<int>(100.0 * trajBucket[3] / totalFrames),
+                 static_cast<int>(100.0 * trajBucket[4] / totalFrames));
     std::fprintf(stderr, "[dist] ");
     for (int i = 0; i < kTierCount; ++i) {
         if (tierCount[i]) std::fprintf(stderr, "%s=%d ", EmotionMapper::def(static_cast<Tier>(i)).name, tierCount[i]);

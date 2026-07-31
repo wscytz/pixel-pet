@@ -128,12 +128,16 @@ void FeatureExtractor::compute(const float* mono, int n, int sampleRate,
     out.centroid = std::clamp(cf / (sampleRate / 2.0f), 0.0f, 1.0f);
 
     // 低频分界(<=250Hz):beat 在这里 → 既是 BPM onset 区,也是音乐 vs 人声判据。
+    // 节奏型另开两带:kick(<=120Hz 底鼓)/ snare(1-4kHz 军鼓/掌声)。
+    const int M = kN / 2;
     const int lowIdx = std::max(2, static_cast<int>(250.0f / sampleRate * kN));
+    const int kickIdx = std::max(2, static_cast<int>(120.0f / sampleRate * kN));
+    const int snareLo = std::max(1, static_cast<int>(1000.0f / sampleRate * kN));
+    const int snareHi = std::min(M, static_cast<int>(4000.0f / sampleRate * kN));
 
     // flatness + lowRatio + 低频 onset(BPM 用)。遍历一次算齐。
     double logSum = 0.0, magSum = 0.0, lowE = 0.0, totalE = 0.0;
-    float lowFlux = 0.0f;
-    const int M = kN / 2;
+    float lowFlux = 0.0f, kickFlux = 0.0f, snareFlux = 0.0f;
     for (int i = 1; i < M; ++i) {
         const float m = mag[i] + kEps;
         logSum += std::log(m);
@@ -143,8 +147,12 @@ void FeatureExtractor::compute(const float* mono, int n, int sampleRate,
         if (i < lowIdx) lowE += e;
         const float d = mag[i] - prevMag_[i];
         if (d > 0.0f && i < lowIdx) lowFlux += d;
+        if (d > 0.0f && i < kickIdx) kickFlux += d;
+        if (d > 0.0f && i >= snareLo && i < snareHi) snareFlux += d;
     }
     std::copy(mag.begin(), mag.begin() + M, prevMag_.begin());
+    out.kickFlux = kickFlux;
+    out.snareFlux = snareFlux;
 
     const int cnt = M - 1;
     out.flatness = (magSum > kEps && cnt > 0)
@@ -169,10 +177,16 @@ void FeatureExtractor::compute(const float* mono, int n, int sampleRate,
         out.keyMargin = keyDiag_.margin;
         minorShare_ = minorShare_ * 0.98f + (keyDiag_.major ? 0.0f : 1.0f) * 0.02f;
         out.minorShare = minorShare_;
+        sectionDet_.feed(prevChroma_.data(), out.rms, analysisHz);   // 结构段:平滑后 chroma + rms
+        out.section = sectionDet_.section();
     }
 
     onsetHistory_.push_back(lowFlux);   // BPM 用低频 onset(抗高频干扰)
     updateBpm(analysisHz, out);
+    rhythmDet_.feed(kickFlux, snareFlux, out.bpm, out.bpmConfidence, analysisHz);   // 节奏型
+    out.rhythmBackbeat = rhythmDet_.backbeat();
+    out.rhythmKickDensity = rhythmDet_.kickDensity();
+    out.rhythmSyncop = rhythmDet_.syncop();
 }
 
 void FeatureExtractor::computeFromBins(const uint8_t* bins, int n, float rms, Features& out) {
@@ -205,8 +219,11 @@ void FeatureExtractor::computeFromBins(const uint8_t* bins, int n, float rms, Fe
 
     // 低频分界:网页 bins 线性铺到 nyquist,低频分辨率有限,取前 1/16 当低频区。
     const int lowIdx = std::max(2, n / 16);
+    const int kickIdx = std::max(2, static_cast<int>(120.0f / 24000.0f * n));
+    const int snareLo = std::max(1, static_cast<int>(1000.0f / 24000.0f * n));
+    const int snareHi = std::min(n, static_cast<int>(4000.0f / 24000.0f * n));
     double logSum = 0.0, magSum = 0.0, lowE = 0.0, totalE = 0.0;
-    float lowFlux = 0.0f;
+    float lowFlux = 0.0f, kickFlux = 0.0f, snareFlux = 0.0f;
     for (int i = 0; i < n; ++i) {
         const float m = mag[i] + kEps;
         logSum += std::log(m);
@@ -216,8 +233,12 @@ void FeatureExtractor::computeFromBins(const uint8_t* bins, int n, float rms, Fe
         if (i < lowIdx) lowE += e;
         const float d = mag[i] - prevBinsMag_[i];
         if (d > 0.0f && i < lowIdx) lowFlux += d;
+        if (d > 0.0f && i < kickIdx) kickFlux += d;
+        if (d > 0.0f && i >= snareLo && i < snareHi) snareFlux += d;
     }
     std::copy(mag.begin(), mag.end(), prevBinsMag_.begin());
+    out.kickFlux = kickFlux;
+    out.snareFlux = snareFlux;
 
     out.flatness = (magSum > kEps && n > 0)
         ? std::clamp(static_cast<float>(std::exp(logSum / n) / (magSum / n)), 0.0f, 1.0f)
@@ -243,10 +264,16 @@ void FeatureExtractor::computeFromBins(const uint8_t* bins, int n, float rms, Fe
         out.keyMargin = keyDiag_.margin;
         minorShare_ = minorShare_ * 0.98f + (keyDiag_.major ? 0.0f : 1.0f) * 0.02f;
         out.minorShare = minorShare_;
+        sectionDet_.feed(prevChroma_.data(), out.rms, 30.0f);        // 网页 ~30Hz
+        out.section = sectionDet_.section();
     }
 
     onsetHistory_.push_back(lowFlux);
     updateBpm(30.0f, out);  // 插件推送 ~30Hz
+    rhythmDet_.feed(kickFlux, snareFlux, out.bpm, out.bpmConfidence, 30.0f);   // 节奏型
+    out.rhythmBackbeat = rhythmDet_.backbeat();
+    out.rhythmKickDensity = rhythmDet_.kickDensity();
+    out.rhythmSyncop = rhythmDet_.syncop();
 }
 
 void FeatureExtractor::updateBpm(float analysisHz, Features& out) {

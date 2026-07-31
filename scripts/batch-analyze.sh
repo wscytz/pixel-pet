@@ -32,6 +32,6 @@ for f in "${files[@]}"; do
     *) afconvert -f WAVE -d LEI16 -c 1 "$f" "$wav" >/dev/null 2>&1 || { echo "✗ 转换失败: $f"; continue; } ;;
   esac
   echo "━━━ $base"
-  ./build/analyze "$wav" 2>&1 | grep -E '\[sum\] frames|\[sum\] key|\[ms\]|\[dist\]' \
-    | sed 's/\[sum\] frames/  总和/; s/\[sum\] key/  key/; s/\[ms\] /  调式/; s/\[dist\] /  档 /'
+  ./build/analyze "$wav" 2>&1 | grep -E '\[sum\] frames|\[sum\] key|\[ms\]|\[sec\]|\[rhythm\]|\[traj\]|\[dist\]' \
+    | sed 's/\[sum\] frames/  总和/; s/\[sum\] key/  key/; s/\[ms\] /  调式/; s/\[sec\] /  段落/; s/\[rhythm\] /  节奏/; s/\[traj\] /  轨迹/; s/\[dist\] /  档 /'
 done

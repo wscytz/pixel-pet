@@ -13,6 +13,7 @@
 #include "audio/SystemAudioSource.h"
 #include "dsp/FeatureExtractor.h"
 #include "emotion/Emotion.h"
+#include "ui/FocusStats.h"
 
 class QSystemTrayIcon;
 class QEvent;
@@ -72,6 +73,8 @@ private:
     void openFile();
     void setManualMode(Tier t);   // 手动切到活动档(固定脸/色,音浪仍随音频)
     void setAutoMode();           // 退回自动(音频驱动情绪)
+    void showFocusReport();       // 专注周报对话框(手动活动档时长)
+    void showCalibrationDialog(); // 用户 A/B 校准:录欢快/伤感两首 → 个性化 minorShare 分界
     void minimizeToTray();        // 隐藏到托盘
     void restoreFromTray();       // 从托盘恢复(置顶)
     void setSize(int s);          // 中心锚定缩放 + 夹屏 + 持久化
@@ -101,10 +104,13 @@ private:
     float simTMs_ = 0.0f;
     float quietMs_ = 0.0f;     // 静默累计(>2s 进 idle)
     float curRms_ = 0.0f;      // 最近一帧 rms(onTick 判 idle 用)
+    float lastMinorShare_ = 0.0f;  // 最近一帧 minorShare(校准对话框录制用)
     qint64 lastAudioMs_ = 0;   // 最近音频帧时间(网页超时降级)
     qint64 lastDebugMs_ = 0;   // 调试打印限流
+    qint64 lastStatsSaveMs_ = 0;   // 专注统计落盘限流(60s)
     bool webActive_ = false;   // 网页源是否曾连过(决定 idle 是否判网页超时)
     WebStatus webStatus_ = WebStatus::Disconnected;  // 网页连接状态(状态点显示用)
+    FocusStats stats_;         // 专注周报(手动活动档时长持久化)
 
     QPoint dragOffset_;
     bool dragging_ = false;

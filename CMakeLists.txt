@@ -28,10 +28,13 @@ set(PIXELPET_SOURCES
     src/ui/Palette.h           src/ui/Palette.cpp
     src/ui/PetWidget.h         src/ui/PetWidget.cpp
     src/ui/SettingsDialog.h    src/ui/SettingsDialog.cpp
+    src/ui/FocusStats.h        src/ui/FocusStats.cpp
     src/ui/PetScene.h          src/ui/PetScene.cpp
     src/ui/PetAnimator.h       src/ui/PetAnimator.cpp
     src/dsp/FFT.h              src/dsp/FFT.cpp
     src/dsp/FeatureExtractor.h src/dsp/FeatureExtractor.cpp
+    src/dsp/SectionDetector.h  src/dsp/SectionDetector.cpp
+    src/dsp/RhythmDetector.h   src/dsp/RhythmDetector.cpp
     src/emotion/Emotion.h
     src/emotion/EmotionMapper.h src/emotion/EmotionMapper.cpp
     src/audio/AudioEngine.h     src/audio/AudioEngine.cpp
@@ -81,6 +84,8 @@ endif()
 add_executable(analyze tools/analyze.cpp
     src/dsp/FFT.h              src/dsp/FFT.cpp
     src/dsp/FeatureExtractor.h src/dsp/FeatureExtractor.cpp
+    src/dsp/SectionDetector.h  src/dsp/SectionDetector.cpp
+    src/dsp/RhythmDetector.h   src/dsp/RhythmDetector.cpp
     src/emotion/Emotion.h
     src/emotion/EmotionMapper.h src/emotion/EmotionMapper.cpp)
 target_include_directories(analyze PRIVATE src)

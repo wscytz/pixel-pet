@@ -4,6 +4,9 @@
 #include <vector>
 #include <cstdint>
 
+#include "dsp/SectionDetector.h"
+#include "dsp/RhythmDetector.h"
+
 // 音频内容类型(场景识别):决定走哪套情绪解读。
 //   Silence 静音   Music 音乐   Voice 人声语音(播客/讲解)   Noise 噪声/游戏音效
 enum class SoundClass { Silence, Music, Voice, Noise };
@@ -23,6 +26,12 @@ struct Features {
                               //   「相关调同构」(C大调/A小调 chroma 一致)时 ≈0 → 调式模糊(伤感签名)
     float minorShare = 0.0f;  // 最近 ~1.7s 判为小调的帧占比 0..1(时间维度的调式倾向)
     SoundClass sound = SoundClass::Music;   // 场景判别结果
+    Section section = Section::Unknown;     // 结构段(副歌/主歌/桥/前奏/尾奏),1Hz 粒度、滞回平滑
+    float kickFlux = 0.0f;   // 低频(~40-120Hz)正谱差通量(底鼓 onset;节奏型用)
+    float snareFlux = 0.0f;  // 中频(~1-4kHz)正谱差通量(军鼓/掌声 onset)
+    float rhythmBackbeat = 0.0f;    // 0..1 snare 落 2/4 拍占比(rock/pop 反拍)
+    float rhythmKickDensity = 0.0f; // 0..1 每拍底鼓数(EDM 四拍=1.0,rock 1&3=0.5,抒情≈0)
+    float rhythmSyncop = 0.0f;      // 0..1 offbeat kick 能量占比(dubstep/hiphop 切分)
 };
 
 class FeatureExtractor {
@@ -45,6 +54,11 @@ public:
     };
     const KeyDiag& lastKeyDiag() const { return keyDiag_; }
 
+    // 结构段诊断(离线调参/analyze 用;段本身在 Features::section)
+    Section section() const { return sectionDet_.section(); }
+    float sectionRepeat() const { return sectionDet_.repeat(); }    // 结构级和声重复度(副歌强度)
+    float sectionNovelty() const { return sectionDet_.novelty(); }  // 新和声程度(段边界)
+
 private:
     static constexpr int kN = 2048;   // FFT 窗(4096 改变真实音乐 chroma 分布,回退;纯弦苛刻测试不足信)
     std::array<float, 48> prevSpec_ = {};        // 48 段时序平滑
@@ -58,6 +72,8 @@ private:
     std::vector<float> onsetHistory_;            // 低频 onset 包络历史(喂 BPM)
     std::vector<float> bpmHistory_;              // 最近 BPM 估计(中值滤波抗野值)
     float prevBpm_ = 0.0f;
+    SectionDetector sectionDet_;                 // 结构段(1Hz,chroma 自相似 + 能量)
+    RhythmDetector rhythmDet_;                   // 节奏型(kick/snare 16 相桶)
 
     void updateBpm(float analysisHz, Features& out);  // onsetHistory → BPM 自相关
 };

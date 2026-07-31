@@ -3,6 +3,7 @@
 #include <QColor>
 #include "emotion/Emotion.h"
 #include "emotion/EmotionMapper.h"
+#include "emotion/Trajectory.h"
 #include "ui/Palette.h"
 
 // 每帧渲染状态。流派定色系/节拍,情绪定颜表情。
@@ -24,6 +25,8 @@ public:
     void setIdle(bool b);               // 静默 idle(没声音时打瞌睡)
     void setManual(bool on, Tier t);    // 手动模式:固定显示某档(压过自动/idle)
     void setBeat(float b);              // 外部踩拍能量(>=0 启用,<0 回退假 bpm)
+    void setSectionBoost(float b);      // 结构段表现力 0..1(副歌 1.0 踩拍更猛/嘴张更大,Intro/Outro 收着)
+    void setDance(float d);             // 律动密度 0..1(每拍底鼓数:EDM 四拍=1,抒情≈0 → 弹跳幅度)
     void resetSwitch();                 // 中断后恢复:清滞回,允许立即重判(连续播放才粘滞)
     void snap(const Emotion& e, Genre g);   // 直接跳到目标(导出静态帧用)
     void tick(int dtMs);
@@ -46,5 +49,10 @@ private:
     bool blinkOnce_ = false;               // 换档时单次眨眼掩饰
     float extBeat_ = 0.0f;                 // 外部踩拍能量
     bool hasExtBeat_ = false;              // 是否使用外部踩拍(否则假 bpm)
+    float sectionBoost_ = 0.5f;            // 结构段表现力(平滑后)
+    float sectionBoostTarget_ = 0.5f;      // 目标(副歌 1.0 / Intro·Outro 0.15)
+    float dance_ = 0.0f;                   // 律动密度(底鼓)
+    TrajectoryTracker traj_;               // 情绪轨迹(当前 vs 慢参考)
+    float build_ = 0.5f;                   // 蓄势期待感(0..1,driftA 升 → 大)
     FrameState st_;
 };
