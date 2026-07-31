@@ -19,7 +19,12 @@ jobs:
       - name: Install Qt (aqtinstall 6.11.1)
         run: |
           python3 -m pip install --break-system-packages --quiet aqtinstall
-          aqt install-qt mac desktop 6.11.1 clang_64 --outputdir "$HOME/Qt" -m qtmultimedia qtwebsockets
+          # Qt 镜像偶发 7z 下载损坏 → 重试 3 次
+          for i in 1 2 3; do
+            aqt install-qt mac desktop 6.11.1 clang_64 --outputdir "$HOME/Qt" -m qtmultimedia qtwebsockets \
+              && break || { echo "aqt 失败(第 $i 次),重试…"; sleep 10; }
+          done
+          test -d "$HOME/Qt/6.11.1/macos/lib/cmake/Qt6"
       - name: Configure
         run: |
           export CMAKE_PREFIX_PATH="$HOME/Qt/6.11.1/macos"   # 在 shell 展开 $HOME(env: 块不展开)
@@ -45,7 +50,14 @@ jobs:
         shell: pwsh
         run: |
           python -m pip install --break-system-packages --quiet aqtinstall
-          aqt install-qt windows desktop 6.8.2 win64_msvc2022_64 --outputdir D:\Qt -m qtmultimedia qtwebsockets
+          # Qt 镜像偶发 7z 下载损坏 → 重试 3 次
+          for ($i = 1; $i -le 3; $i++) {
+            aqt install-qt windows desktop 6.8.2 win64_msvc2022_64 --outputdir D:\Qt -m qtmultimedia qtwebsockets
+            if ($LASTEXITCODE -eq 0) { break }
+            Write-Host "aqt 失败(第 $i 次),重试…"
+            Start-Sleep -Seconds 10
+          }
+          if (-not (Test-Path "D:\Qt\6.8.2\msvc2022_64\lib\cmake\Qt6")) { exit 1 }
       - name: Configure
         shell: pwsh
         env:
@@ -68,6 +80,8 @@ jobs:
     if: startsWith(github.ref, 'refs/tags/')
     needs: [macos, windows]
     runs-on: ubuntu-latest
+    permissions:
+      contents: write        # GITHUB_TOKEN 默认只读,建 Release 需写 contents
     steps:
       - uses: actions/download-artifact@v4
         with:
