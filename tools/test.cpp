@@ -64,11 +64,19 @@ int main() {
         check(eMin.valence < -0.3f, "持续小调(ms0.70, 低能) → valence 负");
     }
 
+    std::fprintf(stderr, "[map] 偏大带 + 清晰大调 → 欢快(励志歌修复)\n");
+    {
+        const Emotion eStrong = EmotionMapper::map(music(+0.6f, 0.40f, 0.8f, 0.10f));  // ms0.40 偏大带 + mode+0.6 清晰大调
+        check(eStrong.valence > 0.0f, "偏大带(ms0.40)+清晰大调(mode+0.6) → valence 正(不误判伤感)");
+        const Emotion eWeak = EmotionMapper::map(music(+0.10f, 0.40f, 0.8f, 0.10f));    // ms0.40 偏大带 + 弱 mode
+        check(eWeak.valence < 0.0f, "偏大带(ms0.40)+弱 mode(+0.10) → valence 负(伤感歌保住)");
+    }
+
     std::fprintf(stderr, "[calibration] 用户校准改变分界\n");
     {
         EmotionMapper::resetCalibration();
-        const Features f = music(+0.8f, 0.35f, 0.8f, 0.10f);   // 低能,ms0.35
-        const Emotion e0 = EmotionMapper::map(f);               // 默认 0.30:0.35 模糊+低能 → 伤感
+        const Features f = music(+0.15f, 0.35f, 0.8f, 0.10f);   // 弱大调 mode+0.15,低能,ms0.35(偏大带)
+        const Emotion e0 = EmotionMapper::map(f);               // 默认:mode 弱(<0.25)不触发偏大带欢快 → 模糊+低能 → 伤感
         EmotionMapper::setUserCalibration(0.40f, 0.55f);        // happyThresh 提到 0.40
         const Emotion e1 = EmotionMapper::map(f);               // 0.35<0.40 → 持续大调 → 正
         check(e1.valence > e0.valence, "提高 happyThresh:ms0.35 从模糊伤感变持续大调,valence 升");

@@ -115,10 +115,18 @@ Emotion map(const Features& f) {
             //     dubstep 0.61。margin 单帧噪声大、只作极端覆盖。
             //   → 持续大调(ms<0.30)正;持续小调(ms>0.55)负;中间模糊:
             //     低能(arousal<0.55)→ 伤感(替代旧的 Calm/Healing 错判);高能 → 按 mode 符号(躁动/惊讶)
+            //   模糊带再细分(实测 4 首 ms 均值:欢快 hope 0.29 / 伤感 黄昏 0.37·幻听 0.42 / dubstep 0.63):
+            //     happyThresh..fuzzyMid = 「偏大带」(leaning major),fuzzyMid..sadThresh = 「真模糊」。
+            //     偏大带里 mode 清晰为正(>0.25)的帧给欢快基因 —— 否则励志大调歌(hope)的帧因 ms
+            //     略过 happyThresh 就被「真模糊+低能→-0.5」误判伤感(实测 hope 84% 伤感秒 mode 为正,
+            //     如 mode+0.62/ms0.40 被判 val-0.60)。弱 mode 偏大带帧(幻听+0.14/黄昏+0.22)仍走伤感,
+            //     保住已验证的伤感判定。
+            const float fuzzyMid = (g_happyThresh + g_sadThresh) * 0.5f;   // 默认 0.425,随校准动
             float gene;
             if (f.minorShare < g_happyThresh)            gene = +f.mode;           // 持续大调 → 治愈/欢快(阈值可校准)
             else if (f.minorShare > g_sadThresh)         gene = -f.keyConfidence;  // 持续小调 → 伤感/愤怒(阈值可校准)
             else if (f.keyMargin <= -0.20f)              gene = -f.keyConfidence;  // 模糊但强烈偏小调
+            else if (f.minorShare < fuzzyMid && f.mode > 0.25f) gene = +f.mode;    // 偏大带+清晰大调 → 欢快(别误伤励志歌)
             else if (arousal < 0.55f)                    gene = -0.5f;             // 真模糊+低能 → 伤感
             else                                         gene = f.mode;            // 真模糊+高能 → mode 符号
             float valence = std::clamp(gene * 1.3f, -1.0f, 1.0f);
