@@ -97,7 +97,8 @@ void SystemAudioSource::loop() {
     QVector<float> buf;
     buf.reserve(winSize * 2);
     while (impl_->run) {
-        UINT32 count = 0, flags = 0;
+        UINT32 count = 0;
+        DWORD flags = 0;        // GetBuffer 第三参是 DWORD*(MSVC 下 DWORD≠UINT32,别用后者)
         LPBYTE data = nullptr;
         const HRESULT hr = impl_->capture->GetBuffer(&data, &count, &flags, nullptr, nullptr);
         if (hr == AUDCLNT_S_BUFFER_EMPTY) { Sleep(5); continue; }
