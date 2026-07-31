@@ -31,12 +31,15 @@ jobs:
           cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
       - name: Build
         run: cmake --build build -j
-      - name: Regression(16 表情档脸 + 分析器冒烟 + 单元测试)
+      - name: Regression(16 表情档脸 + 分析器冒烟 + 单元测试 + 脸谱图)
         run: |
           bash scripts/dump-faces.sh
           cmake --build build --target analyze -j
           cmake --build build --target pp_test -j
           ./build/pp_test
+          # 脸谱图生成冒烟(--sheet 新代码:验不崩 + 出非空 PNG)
+          ./build/pixel-pet.app/Contents/MacOS/pixel-pet --sheet /tmp/sheet.png 200
+          test -s /tmp/sheet.png
       - name: Package(.dmg)
         run: bash scripts/package-mac.sh
       - uses: actions/upload-artifact@v4
@@ -68,6 +71,11 @@ jobs:
       - name: Build(WASAPI loopback 在此编过)
         shell: pwsh
         run: cmake --build build --config Release -j
+      - name: Unit tests(pp_test 在 MSVC 下也过)
+        shell: pwsh
+        run: |
+          cmake --build build --config Release --target pp_test -j
+          .\build\Release\pp_test.exe
       - name: Deploy(windeployqt 打 Qt DLL)
         shell: pwsh
         run: |

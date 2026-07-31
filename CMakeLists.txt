@@ -103,6 +103,11 @@ if(NOT MSVC)
     target_compile_options(pp_test PRIVATE -Wall -Wextra -Wpedantic)
 endif()
 
+# 纯算法工具不涉 Q_OBJECT,关 AUTOMOC 免扫源码 + 生成空 mocs_compilation
+foreach(t analyze pp_test)
+    set_target_properties(${t} PROPERTIES AUTOMOC OFF AUTOUIC OFF AUTORCC OFF)
+endforeach()
+
 # 警告标志仅 GNU/Clang(MSVC 不认 -W 系列)
 # -Werror=switch:漏枚举 case 一律构建失败(扩 Tier 时兜住 Palette/canonical 等穷举 switch)
 if(NOT MSVC)
