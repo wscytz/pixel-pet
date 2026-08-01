@@ -12,9 +12,10 @@
 #include <cstdio>
 #include <vector>
 
-static int g_fail = 0;
+static int g_fail = 0, g_total = 0;
 static void check(bool ok, const char* name) {
     std::fprintf(stderr, "  %s %s\n", ok ? "ok  " : "FAIL", name);
+    ++g_total;
     if (!ok) ++g_fail;
 }
 
@@ -92,7 +93,9 @@ int main() {
         check(st > ht, "sadThresh > happyThresh(分界有序)");
     }
 
-    if (g_fail == 0) { std::fprintf(stderr, "\n=== 全部通过 ===\n"); return 0; }
+    constexpr int kExpected = 12;   // FFT1 + mapTier3 + map2 + 偏大带2 + calibration1 + calibrateFromMs3;加/删断言时同步更新(防整块没跑也报"全部通过")
+    if (g_fail == 0 && g_total == kExpected) { std::fprintf(stderr, "\n=== 全部通过(%d 断言)===\n", g_total); return 0; }
+    if (g_fail == 0) std::fprintf(stderr, "\n=== 断言数不符:跑了 %d,预期 %d ===\n", g_total, kExpected);
     std::fprintf(stderr, "\n=== %d 项失败 ===\n", g_fail);
     return 1;
 }

@@ -94,9 +94,10 @@ bool SystemAudioSource::start() {
 void SystemAudioSource::stop() {
     if (!impl_) return;
     impl_->run = false;
+    if (impl_->client) impl_->client->Stop();   // 先停 client,释放可能阻塞在 GetBuffer 的捕获线程(防 stop/dtor 挂起 UI)
     if (impl_->th.joinable()) impl_->th.join();
     if (impl_->capture) { impl_->capture->Release(); impl_->capture = nullptr; }
-    if (impl_->client)  { impl_->client->Stop(); impl_->client->Release(); impl_->client = nullptr; }
+    if (impl_->client)  { impl_->client->Release(); impl_->client = nullptr; }
     if (impl_->wfx)     { CoTaskMemFree(impl_->wfx); impl_->wfx = nullptr; }
     if (active_) { active_ = false; emit activeChanged(false); }
 }

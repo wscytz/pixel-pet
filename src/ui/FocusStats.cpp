@@ -5,6 +5,8 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QJsonDocument>
+#include <QJsonParseError>
+#include <QSaveFile>
 #include <QStandardPaths>
 
 #include <algorithm>
@@ -12,16 +14,25 @@
 void FocusStats::load() {
     QFile f(path());
     if (!f.open(QIODevice::ReadOnly)) return;
-    root_ = QJsonDocument::fromJson(f.readAll()).object();
+    QJsonParseError err{};
+    QJsonDocument doc = QJsonDocument::fromJson(f.readAll(), &err);
+    if (err.error != QJsonParseError::NoError || !doc.isObject()) {
+        // 坏档不静默清零:改名留现场(.bak),专注历史可手工恢复
+        f.close();
+        QFile::rename(path(), path() + ".bak");
+        return;
+    }
+    root_ = doc.object();
 }
 
 void FocusStats::save() const {
     if (!dirty_) return;
     const QString p = path();
     QDir().mkpath(QFileInfo(p).path());
-    QFile f(p);
+    QSaveFile f(p);                       // 原子写:临时文件 + commit 才 rename,中途失败不碰原档
     if (!f.open(QIODevice::WriteOnly)) return;
     f.write(QJsonDocument(root_).toJson(QJsonDocument::Indented));
+    if (!f.commit()) return;              // 写/落盘失败 → 不覆盖原档,也不清 dirty
     dirty_ = false;
 }
 

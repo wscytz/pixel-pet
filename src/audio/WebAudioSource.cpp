@@ -7,6 +7,7 @@
 #include <QJsonObject>
 #include <QJsonArray>
 #include <QTimer>
+#include <algorithm>
 #include <cmath>
 
 WebAudioSource::WebAudioSource(QObject* parent) : QObject(parent) {
@@ -24,6 +25,13 @@ WebAudioSource::WebAudioSource(QObject* parent) : QObject(parent) {
     if (server_) {
         connect(server_, &QWebSocketServer::newConnection, this, [this]() {
             QWebSocket* c = server_->nextPendingConnection();
+            // 只认浏览器扩展来源:非空 origin 且非 chrome-extension → 拒绝(本地恶意网页不能驱动/干扰桌宠);空 origin(本地调试)放行
+            const QString origin = c->origin();
+            if (!origin.isEmpty() && !origin.startsWith(QStringLiteral("chrome-extension://"))) {
+                c->close(QWebSocketProtocol::CloseCodePolicyViolated, QStringLiteral("origin rejected"));
+                c->deleteLater();
+                return;
+            }
             clients_ << c;
             hasClient_ = true;
             connect(c, &QWebSocket::textMessageReceived, this,
@@ -34,11 +42,12 @@ WebAudioSource::WebAudioSource(QObject* parent) : QObject(parent) {
                     const QJsonDocument doc = QJsonDocument::fromJson(msg.toUtf8());
                     const QJsonObject o = doc.object();
                     const QJsonArray arr = o.value("pcm").toArray();
+                    if (arr.size() <= 0 || arr.size() > 8192) return;   // 先查大小再分配(防超大数组)
                     QVector<float> pcm;
                     pcm.reserve(arr.size());
                     for (const auto& v : arr)
                         pcm.append(static_cast<float>(v.toDouble()));
-                    const int sr = o.value("sr").toInt(44100);
+                    const int sr = std::clamp(o.value("sr").toInt(44100), 8000, 192000);   // 防除零/极端采样率
                     const QString title = o.value("title").toString();
                     if (pcm.isEmpty() || pcm.size() > 8192) return;   // 坏包/过大校验
                     emit audioFrame(pcm, sr, title);
@@ -53,6 +62,7 @@ WebAudioSource::WebAudioSource(QObject* parent) : QObject(parent) {
                 clients_.removeAll(c);
                 if (activeClient_ == c) activeClient_ = nullptr;
                 hasClient_ = !clients_.isEmpty();
+                c->deleteLater();   // server 不拥有 socket,caller 不删即泄漏(切页/重载累积)
             });
         });
     }

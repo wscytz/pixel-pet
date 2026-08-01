@@ -68,6 +68,7 @@ private:
     SoundClass prevSound_ = SoundClass::Music;   // 场景平滑(抗 EDM 合成段 flatness 越界导致的 Music↔Noise 抖动)
     int soundDissent_ = 0;                        // 连续与 prevSound_ 不一致的帧数
     std::vector<float> prevMag_;                 // 上帧幅度(正谱差通量用)
+    bool fluxInit_ = false;                      // 冷启动:首帧用 mag 初始化 prevMag_ 再差分(全 0 起步会整谱伪正通量)
     std::vector<float> onsetHistory_;            // 低频 onset 包络历史(喂 BPM)
     std::vector<float> bpmHistory_;              // 最近 BPM 估计(中值滤波抗野值)
     float prevBpm_ = 0.0f;

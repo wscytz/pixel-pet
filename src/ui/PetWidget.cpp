@@ -154,6 +154,10 @@ void PetWidget::loadFile(const QString& path) {
         connect(engine_, &AudioEngine::ended, this, [this]() {
             analyzer_->stop();
         });
+        connect(engine_, &AudioEngine::failed, this, [this](const QString& msg) {
+            analyzer_->stop();
+            std::fprintf(stderr, "[AudioEngine] 加载失败: %s\n", msg.toUtf8().constData());
+        });
     }
     engine_->load(path);
 }
@@ -298,7 +302,8 @@ void PetWidget::loadSettings() {
     const int mt = s.value("manualTier", -1).toInt();
     if (mt >= static_cast<int>(Tier::Focus) && mt < kTierCount)
         setManualMode(static_cast<Tier>(mt));
-    // 透明度 / 锁定 / 音浪样式(定制项,构造恢复)
+    // 透明度 / 锁定 / 音浪样式 / 网页源开关(定制项,构造恢复)
+    webEnabled_ = s.value("webEnabled", true).toBool();
     opacity_ = qBound(0.40, s.value("opacity", 1.0).toDouble(), 1.0);
     setWindowOpacity(opacity_);
     locked_ = s.value("locked", false).toBool();
@@ -320,6 +325,7 @@ void PetWidget::saveSettings() {
     s.setValue("opacity", opacity_);
     s.setValue("locked", locked_);
     s.setValue("eqStyle", static_cast<int>(eqStyle_));
+    s.setValue("webEnabled", webEnabled_);
     s.setValue("calibrate/happy", static_cast<double>(EmotionMapper::happyThresh()));
     s.setValue("calibrate/sad", static_cast<double>(EmotionMapper::sadThresh()));
 }
@@ -538,13 +544,13 @@ void PetWidget::onTick() {
 
     if (!haveRealAudio_) stepSim(dt);
 
-    // idle 判定只在有真实音源时跑(模拟模式跳过)。统一在 onTick 用真实 dt,
-    // 不依赖音频回调频率;网页断开>1.5s 或本地停止 → 视为静默。
-    if (haveRealAudio_ && (engine_ || webActive_ || systemActive_)) {
+    // idle 判定:真实音源驱动,断开>1.5s 视为静默;全源静默时也按静默算(idle 不冻结)
+    if (haveRealAudio_) {
         float r = curRms_;
-        if (webActive_ && (now - lastAudioMs_ > 1500)) r = 0.0f;
+        if (webActive_ && (now - lastAudioMs_ > 1500)) { webActive_ = false; r = 0.0f; }   // 网页断线复位,别永远标"网页扩展"
         else if (systemActive_ && (now - lastAudioMs_ > 1500)) r = 0.0f;
         else if (engine_ && !engine_->isPlaying()) r = 0.0f;
+        else if (!engine_ && !webActive_ && !systemActive_) r = 0.0f;   // 三源全静默
         updateIdle(r, dt);
     }
 

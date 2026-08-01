@@ -75,13 +75,14 @@ void FeatureExtractor::compute(const float* mono, int n, int sampleRate,
                                float analysisHz, Features& out) {
     static thread_local std::vector<std::complex<float>> buf(kN);
     if (static_cast<int>(buf.size()) < kN) buf.resize(kN);
-    if (static_cast<int>(prevMag_.size()) < kN / 2) prevMag_.assign(kN / 2, 0.0f);
+    if (static_cast<int>(prevMag_.size()) < kN / 2) { prevMag_.assign(kN / 2, 0.0f); fluxInit_ = false; }
 
     // 取最后 kN 个样本,不足补零,Hann 窗
     const int start = std::max(0, n - kN);
     for (int i = 0; i < kN; ++i) {
         const int idx = start + i;
-        const float s = (idx < n) ? mono[idx] : 0.0f;
+        float s = (idx < n) ? mono[idx] : 0.0f;
+        if (!std::isfinite(s)) s = 0.0f;   // 防御:单 NaN/Inf 样本经 FFT 会毒化 prevSpec_/prevChroma_/历史,永久错
         const float w = 0.5f * (1.0f - std::cos(2.0f * kPi * i / (kN - 1)));   // Hann 窗(主瓣窄、分辨率好;Blackman 主瓣太宽致峰糊)
         buf[i] = std::complex<float>(s * w, 0.0f);
     }
@@ -153,7 +154,7 @@ void FeatureExtractor::compute(const float* mono, int n, int sampleRate,
         const double e = static_cast<double>(mag[i]) * mag[i];
         totalE += e;
         if (i < lowIdx) lowE += e;
-        const float d = mag[i] - prevMag_[i];
+        const float d = fluxInit_ ? (mag[i] - prevMag_[i]) : 0.0f;   // 冷启动首帧跳过差分(避免伪 onset)
         if (d > 0.0f && i < lowIdx) lowFlux += d;
         if (d > 0.0f && i < kickIdx) kickFlux += d;
         if (d > 0.0f && i >= bodyLo && i < bodyHi) bodyFlux += d;
@@ -164,6 +165,7 @@ void FeatureExtractor::compute(const float* mono, int n, int sampleRate,
         }
     }
     std::copy(mag.begin(), mag.begin() + M, prevMag_.begin());
+    fluxInit_ = true;   // 首帧已用本帧 mag 初始化,后续正常差分
     out.kickFlux = kickFlux;
     out.bodyFlux = bodyFlux;
     out.snareFlux = snareFlux;
@@ -224,12 +226,14 @@ void FeatureExtractor::updateBpm(float analysisHz, Features& out) {
             if (acf > best) { best = acf; bestLag = lag; }
         }
         const float bpm = 60.0f * analysisHz / static_cast<float>(bestLag);
-        bpmHistory_.push_back(bpm);
-        if (bpmHistory_.size() > 7) bpmHistory_.erase(bpmHistory_.begin());
-        std::vector<float> s = bpmHistory_;
-        std::sort(s.begin(), s.end());
-        const float med = s[s.size() / 2];   // 中值滤波去野值
-        prevBpm_ = (prevBpm_ < 1.0f) ? med : (prevBpm_ * 0.85f + med * 0.15f);
+        if (best >= 0.20f) {   // 拍子规律性够才更新历史:静音/无拍时 best≈0,bestLag=minLag,塞垃圾 bpm 会污染 prevBpm_ → 恢复节拍后头 ~1s 报错值
+            bpmHistory_.push_back(bpm);
+            if (bpmHistory_.size() > 7) bpmHistory_.erase(bpmHistory_.begin());
+            std::vector<float> s = bpmHistory_;
+            std::sort(s.begin(), s.end());
+            const float med = s[s.size() / 2];   // 中值滤波去野值
+            prevBpm_ = (prevBpm_ < 1.0f) ? med : (prevBpm_ * 0.85f + med * 0.15f);
+        }
         out.bpm = (best >= 0.20f) ? prevBpm_ : 0.0f;   // 规律性低(静音/无拍)→ bpm 置 0,别报误导值(下游本就 gate bpm>1)
         out.bpmConfidence = std::clamp(best, 0.0f, 1.0f);
     } else {

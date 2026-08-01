@@ -38,4 +38,5 @@ private:
     QByteArray raw_;            // mono float 字节流(给 QBuffer)
     QAudioSink* sink_ = nullptr;
     QBuffer*    buf_  = nullptr;
+    QAudioDecoder* activeDec_ = nullptr;   // 在途解码(load 重入时取消旧的,防并发解码互相覆盖)
 };

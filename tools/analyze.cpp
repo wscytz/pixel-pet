@@ -36,13 +36,17 @@ static bool readWav(const std::string& path, std::vector<float>& mono, int& sr) 
         const long chunkStart = std::ftell(f);
         const long chunkSize = dummy;
         if (std::memcmp(tag, "fmt ", 4) == 0) {
-            unsigned short fmt, ch;
-            unsigned int rate;
-            unsigned short bps;
-            rd(&fmt, 2); rd(&ch, 2); rd(&rate, 4);
-            rd(&dummy, 4); rd(&dummy, 2);   // byteRate, blockAlign
-            rd(&bps, 2);
+            unsigned short fmt = 0, ch = 0;
+            unsigned int rate = 0;
+            unsigned short bps = 0;
+            if (!rd(&fmt, 2) || !rd(&ch, 2) || !rd(&rate, 4) || !rd(&dummy, 4) || !rd(&dummy, 2) || !rd(&bps, 2)) {
+                std::fprintf(stderr, "truncated fmt chunk\n"); return false;
+            }
             channels = ch; sr = static_cast<int>(rate); bits = bps;
+            if (fmt == 1 && (bits != 16 && bits != 24 && bits != 32)) {   // PCM:16/24/32(8-bit 会走错 memcpy 越界,直接拒)
+                std::fprintf(stderr, "unsupported PCM bits %u\n", bits); return false;
+            }
+            if (fmt == 3 && bits != 32) { std::fprintf(stderr, "float wav must be 32-bit\n"); return false; }
             if (fmt != 1 && fmt != 3) { std::fprintf(stderr, "unsupported fmt %u\n", fmt); return false; }
         } else if (std::memcmp(tag, "data", 4) == 0) {
             foundData = true; dataSize = chunkSize;
@@ -50,10 +54,13 @@ static bool readWav(const std::string& path, std::vector<float>& mono, int& sr) 
         }
         std::fseek(f, chunkStart + chunkSize + (chunkSize & 1), SEEK_SET);
     }
-    if (!foundData || channels <= 0 || sr <= 0) { std::fprintf(stderr, "bad wav\n"); return false; }
+    if (!foundData || channels <= 0 || sr <= 0 || bits < 8) { std::fprintf(stderr, "bad wav\n"); return false; }
 
     const int bytesPerSample = bits / 8;
-    const long frames = dataSize / (bytesPerSample * channels);
+    const long long bytesPerFrame = static_cast<long long>(bytesPerSample) * channels;
+    if (bytesPerFrame <= 0) { std::fprintf(stderr, "bad frame size\n"); return false; }
+    if (dataSize > 512LL * 1024 * 1024) { std::fprintf(stderr, "wav too large (%.1f MB), abort\n", dataSize / 1048576.0); return false; }   // 防 4GB dataSize 驱动 bad_alloc
+    const long frames = dataSize / bytesPerFrame;
     mono.reserve(static_cast<size_t>(frames));
     std::vector<char> raw(static_cast<size_t>(bytesPerSample * channels));
     for (long i = 0; i < frames; ++i) {
@@ -270,6 +277,7 @@ int main(int argc, char** argv) {
         }
     }
 
+    if (totalFrames == 0) { std::fprintf(stderr, "\n[sum] 无有效音频帧(空/全静音)\n"); return 0; }
     const double k = totalFrames;
     std::fprintf(stderr, "\n[sum] frames=%d mode=%+.3f margin=%+.3f kconf=%.3f ms=%.3f val=%+.3f aro=%.3f bpm=%s%.1f\n",
                  totalFrames, modeSum / k, marginSum / k, kconfSum / k, msSum / k,
