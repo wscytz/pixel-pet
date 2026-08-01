@@ -11,6 +11,9 @@ on:
   pull_request:
   workflow_dispatch:
 
+permissions:
+  contents: read        # 顶层只读:macos/windows 不需要写权限(release job 已单独提权写 contents)
+
 jobs:
   macos:
     runs-on: macos-latest

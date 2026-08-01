@@ -13,11 +13,15 @@ let pcmBuf = null;
 let ws = null, loopTimer = null;
 let lastTitle = '';
 let lastSend = 0;
+let retryDelay = 2000;   // ws 重连指数退避
 
 function connectWS() {
   ws = new WebSocket(WS_URL);
-  ws.onopen = () => console.log('[PixelPet] ws connected');
-  ws.onclose = () => setTimeout(connectWS, 2000);
+  ws.onopen = () => { console.log('[PixelPet] ws connected'); retryDelay = 2000; };
+  ws.onclose = () => {
+    retryDelay = Math.min(30000, retryDelay * 2);   // 2s→…→30s 封顶,桌宠未开时别永久 2s 空转
+    setTimeout(connectWS, retryDelay);
+  };
   ws.onerror = () => {};
 }
 
@@ -45,7 +49,7 @@ async function startStream(streamId, title) {
   source.connect(analyser);
   source.connect(audioCtx.destination);   // ★ 回放!否则标签页静音
   pcmBuf = new Float32Array(analyser.fftSize);
-  if (!ws || ws.readyState !== WebSocket.OPEN) connectWS();
+  if (!ws || (ws.readyState !== WebSocket.OPEN && ws.readyState !== WebSocket.CONNECTING)) connectWS();   // CONNECTING 时别重开,防双连接
   loopTimer = setInterval(loop, SEND_INTERVAL);
   console.log('[PixelPet] capturing pcm, fftSize=' + analyser.fftSize + ' sr=' + audioCtx.sampleRate);
 }
