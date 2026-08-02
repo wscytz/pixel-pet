@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "PixelPet Audio Capture",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "minimum_chrome_version": "116",
   "description": "捕获当前标签页音频,推频谱给 PixelPet 桌宠(ws://127.0.0.1:17632)",
   "permissions": ["tabCapture", "offscreen", "activeTab"],
