@@ -5,6 +5,7 @@
 #include <QLinearGradient>
 #include <QRadialGradient>
 #include <QString>
+#include <QStringList>
 
 #include <cstring>
 #include <cstdlib>
@@ -153,7 +154,10 @@ int main(int argc, char* argv[]) {
 
     PetWidget w;
     w.show();
-    if (argc >= 2) w.loadFile(QString::fromLocal8Bit(argv[1]));  // 命令行直接传歌
+    // 命令行直接传歌。Windows 上 argv 是窄串,中文路径编码随系统 code page(UTF-8 beta / GBK)不定,
+    // fromLocal8Bit 不可靠;用 app.arguments()(Qt 在 Windows 走 GetCommandLineW 宽字符)拿正确路径。
+    const QStringList args = app.arguments();
+    if (args.size() >= 2 && !args[1].startsWith(QLatin1String("--"))) w.loadFile(args[1]);
     // 否则:右键「打开文件」或直接拖歌进来
     return app.exec();
 }

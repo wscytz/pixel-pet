@@ -118,6 +118,11 @@ PetWidget::PetWidget(QWidget* parent) : QWidget(parent) {
     tray_->show();
     qApp->installEventFilter(this);   // Dock 点击 → 激活时若隐藏则恢复
     loadSettings();                   // 恢复 尺寸/位置/手动模式
+#ifdef Q_OS_WIN
+    // Windows 主阵地:系统音频(WASAPI)默认开启捕获,开箱即用——任意 app 出声即驱动宠物;
+    // 安静/停音时由 applyFeatures 的 audible 门控保持 idle,不会因底噪乱跳。mac 为 stub 不生效。
+    if (sysSource_) sysSource_->start();
+#endif
 }
 
 void PetWidget::setEmotion(const Emotion& e) { anim_.setEmotion(e); }
@@ -219,6 +224,7 @@ QString PetWidget::currentSourceName() const {
     if (webActive_ && webEnabled_)        return QStringLiteral("网页扩展");
     if (systemActive_)                    return QStringLiteral("系统音频");
     if (engine_ && engine_->isPlaying())  return QStringLiteral("本地文件");
+    if (!haveRealAudio_)                  return QStringLiteral("待机演示(未接音频)");  // 没接过真实源:跑的是待机动画,别误当"静默"
     return QStringLiteral("无 — 静默中");
 }
 
@@ -356,30 +362,40 @@ void PetWidget::onSystemAudio(const QVector<float>& mono, int sr) {
 }
 
 void PetWidget::applyFeatures(const Features& f) {
-    curRms_ = f.rms;
     lastMinorShare_ = f.minorShare;   // 校准对话框实时录制用
     const qint64 nowMs = clock_.elapsed();
-    if (nowMs - lastAudioMs_ > 1500) anim_.resetSwitch();   // 中断>1.5s 后恢复:重新检测,不粘滞
-    lastAudioMs_ = nowMs;
-    setSpectrum(f.spectrum.data(), 48);   // 音浪/idle/超时 仍要喂,手动模式也跳
-    if (!manual_) {                        // 手动模式:别让音频情绪/流派覆盖固定档
-        setEmotion(EmotionMapper::map(f));
-        setGenre(EmotionMapper::guessGenre(f));
+    // 静音/底噪帧(WASAPI 停音后的系统底噪/残留、歌曲间隙)不当作"有声":否则停音后
+    // lastAudioMs_ 被持续刷新→不超时→不 idle,且静音帧随机 mode 让脸乱跳、底噪让音浪空转。
+    // 阈值与 updateIdle 的 quiet 阈值(0.015)对齐。
+    const bool audible = (f.rms > 0.015f);
+    if (audible) {
+        curRms_ = f.rms;
+        if (nowMs - lastAudioMs_ > 1500) anim_.resetSwitch();   // 中断>1.5s 后恢复:重新检测,不粘滞
+        lastAudioMs_ = nowMs;
+        setSpectrum(f.spectrum.data(), 48);
+        if (!manual_) {                    // 手动模式:别让音频情绪/流派覆盖固定档
+            setEmotion(EmotionMapper::map(f));
+            setGenre(EmotionMapper::guessGenre(f));
+        }
+        // 结构段表现力:副歌 1.0(踩拍更猛/嘴张更大),Intro·Outro 0.15(收着),主歌/未知 0.5
+        // (1Hz+滞回,段切换有 ~3s 惯性;前 20s 不给副歌 —— 历史不足别误判)
+        float boost = 0.5f;
+        switch (f.section) {
+            case Section::Chorus: boost = 1.0f;  break;
+            case Section::Bridge: boost = 0.7f;  break;
+            case Section::Intro:
+            case Section::Outro:  boost = 0.15f; break;
+            case Section::Unknown:
+            case Section::Verse:  boost = 0.5f;  break;
+        }
+        anim_.setSectionBoost(boost);
+        anim_.setDance(f.rhythmKickDensity);   // 底鼓密度 → 弹跳幅度(EDM 跳得欢,抒情轻摆)
+    } else {
+        curRms_ = 0.0f;                          // 静音 → onTick 的 idle 计时立即累加
+        static const float zeroSpec[48] = {};
+        setSpectrum(zeroSpec, 48);               // 音浪停音即清零(不等 1.5s 超时)
+        // 表情/流派/段落/踩拍 冻结,等 anim idle 接管 —— 别用静音帧的随机 mode 跳脸
     }
-
-    // 结构段表现力:副歌 1.0(踩拍更猛/嘴张更大),Intro·Outro 0.15(收着),主歌/未知 0.5
-    // (1Hz+滞回,段切换有 ~3s 惯性;前 20s 不给副歌 —— 历史不足别误判)
-    float boost = 0.5f;
-    switch (f.section) {
-        case Section::Chorus: boost = 1.0f;  break;
-        case Section::Bridge: boost = 0.7f;  break;
-        case Section::Intro:
-        case Section::Outro:  boost = 0.15f; break;
-        case Section::Unknown:
-        case Section::Verse:  boost = 0.5f;  break;
-    }
-    anim_.setSectionBoost(boost);
-    anim_.setDance(f.rhythmKickDensity);   // 底鼓密度 → 弹跳幅度(EDM 跳得欢,抒情轻摆)
 
     // 调试打印(500ms 一次):看 SoundClass 判定准不准,据此手调阈值
     const qint64 now = clock_.elapsed();
