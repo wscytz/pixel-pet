@@ -14,7 +14,14 @@
 AudioEngine::AudioEngine(QObject* parent) : QObject(parent) {}
 
 void AudioEngine::load(const QString& path) {
-    if (activeDec_) { activeDec_->stop(); activeDec_->deleteLater(); activeDec_ = nullptr; }   // 取消在途解码(load 重入)
+    if (activeDec_) {
+        // 断开旧解码器全部信号再销毁:若 stop() 后 finished 仍被投递(Qt 版本相关),
+        // 其 lambda 会把旧文件的半成品 acc move 进 mono_,覆盖新解码结果。
+        activeDec_->disconnect();
+        activeDec_->stop();
+        activeDec_->deleteLater();
+        activeDec_ = nullptr;
+    }   // 取消在途解码(load 重入)
     auto* dec = new QAudioDecoder(this);
     activeDec_ = dec;
     auto acc = std::make_shared<std::vector<float>>();
