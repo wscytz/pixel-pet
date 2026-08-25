@@ -11,6 +11,10 @@
 - **审核**:Qt 界面 `new` 均为父子树托管(无泄漏);Windows WASAPI 采集线程独立 + atomic stop flag;-Wall -Wextra -Wpedantic -Werror=switch 严格档;CI 双平台(macOS dmg + Windows exe+DLL)每次 push 把关。
 - **发布物**:推送 v1.0.0 tag 后 CI 自动建 GitHub Release 草稿(挂 dmg + windows zip)。
 
+### 发布后修复(随 v1.0.0 tag 后主干,未重出安装包)
+
+- **fix(audio)** `8d1cce7`(2026-08-22):`load()` 重入时旧解码器先 disconnect 再销毁 —— 防 stop 后 finished 仍投递、旧半成品数据覆盖 `mono_`(Qt 版本相关的换曲竞态)。源码已含,v1.0.0 Release 安装包构建于该修复之前,受影响场景为"换曲瞬间",遇到即从最新主干构建。
+
 ### 已知约束
 
 - 桌宠音频情绪为纯算法(无 ML),调式模糊曲可能落 Healing/Sad——按设计非 bug。
