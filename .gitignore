@@ -19,3 +19,7 @@ samples/
 .idea/
 .vscode/
 .claude/
+
+# Mimosa 安全扫描器的本地会话状态(hook 每次运行都会重写;曾因 git add -A
+# 混入提交 —— 忽略之,防复发)
+.mimosa/
